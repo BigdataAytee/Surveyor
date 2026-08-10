@@ -1,0 +1,242 @@
+/*
+ * Design system tokens (Architecture B.16).
+ *
+ * Everything the interface is allowed to look like lives here. Components
+ * reference tokens, never raw values, so a change to type scale or elevation
+ * happens once.
+ *
+ * The palette is deliberately restrained: neutral ground, one accent, and
+ * semantic colours reserved for status. The drawing has its own visual
+ * language (see canvas.css) which is kept separate from application chrome —
+ * a survey plan should not inherit the app's brand.
+ */
+
+:root {
+  color-scheme: light dark;
+
+  /* --- Type ------------------------------------------------------------ */
+  --font-sans:
+    'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto,
+    'Helvetica Neue', Arial, sans-serif;
+  /* Numeric readouts get tabular figures so columns of coordinates line up. */
+  --font-technical: 'SF Mono', 'JetBrains Mono', 'Roboto Mono', ui-monospace,
+    'Menlo', monospace;
+
+  --text-display: 1.75rem;
+  --text-heading: 1.25rem;
+  --text-subheading: 1rem;
+  --text-body: 0.9375rem;
+  --text-caption: 0.8125rem;
+  --text-micro: 0.6875rem;
+
+  --leading-tight: 1.2;
+  --leading-normal: 1.5;
+
+  --weight-regular: 400;
+  --weight-medium: 500;
+  --weight-semibold: 600;
+
+  /* --- Space ----------------------------------------------------------- */
+  --space-1: 0.25rem;
+  --space-2: 0.5rem;
+  --space-3: 0.75rem;
+  --space-4: 1rem;
+  --space-5: 1.5rem;
+  --space-6: 2rem;
+  --space-7: 3rem;
+
+  /* Touch targets never go below this (B.16). */
+  --touch-min: 44px;
+
+  /* --- Radius ---------------------------------------------------------- */
+  --radius-sm: 6px;
+  --radius-md: 10px;
+  --radius-lg: 16px;
+  --radius-xl: 22px;
+  --radius-full: 999px;
+
+  /* --- Motion ---------------------------------------------------------- */
+  --duration-micro: 120ms;
+  --duration-normal: 210ms;
+  --duration-large: 380ms;
+
+  --ease-standard: cubic-bezier(0.2, 0, 0, 1);
+  --ease-decelerate: cubic-bezier(0.05, 0.7, 0.1, 1);
+  --ease-spring: cubic-bezier(0.34, 1.36, 0.64, 1);
+
+  /* --- Light palette --------------------------------------------------- */
+  --ground: #f6f7f9;
+  --surface: #ffffff;
+  --surface-raised: #ffffff;
+  --surface-sunken: #eef0f4;
+  --surface-hover: #f0f2f6;
+
+  --border: #e2e5eb;
+  --border-strong: #cbd0da;
+
+  --ink: #111827;
+  --ink-secondary: #4b5563;
+  --ink-tertiary: #8b93a1;
+  --ink-inverse: #ffffff;
+
+  --accent: #2f5fe0;
+  --accent-hover: #2850c4;
+  --accent-soft: #eaf0ff;
+  --accent-ink: #1c3f9e;
+
+  --success: #12805c;
+  --success-soft: #e6f5ef;
+  --warning: #a86a00;
+  --warning-soft: #fdf1de;
+  --danger: #c0322b;
+  --danger-soft: #fdecea;
+
+  /* Provenance: the one place colour carries meaning about data (B.13). */
+  --suggested: #7c3aed;
+  --suggested-soft: #f3ecff;
+
+  --shadow-sm: 0 1px 2px rgb(16 24 40 / 0.06), 0 1px 3px rgb(16 24 40 / 0.04);
+  --shadow-md: 0 4px 12px rgb(16 24 40 / 0.08), 0 2px 4px rgb(16 24 40 / 0.04);
+  --shadow-lg: 0 16px 40px rgb(16 24 40 / 0.14), 0 4px 10px rgb(16 24 40 / 0.06);
+
+  /* --- Drawing surface -------------------------------------------------
+   * B.16 allows the canvas to stay light while the UI goes dark, because a
+   * drafting surface reads better as paper. These tokens are therefore NOT
+   * redefined in the dark block below.
+   */
+  --paper: #fcfcfd;
+  --paper-grid: #e8ebf0;
+  --paper-grid-major: #dadfe7;
+  --draw-boundary: #0f172a;
+  --draw-feature: #3f4654;
+  --draw-feature-fill: #eceef3;
+  --draw-road: #8a92a1;
+  --draw-label: #111827;
+  --draw-point: #0f172a;
+  --draw-selection: #2f5fe0;
+}
+
+[data-theme='dark'] {
+  --ground: #0b0d12;
+  --surface: #14171f;
+  --surface-raised: #1b1f29;
+  --surface-sunken: #0f1219;
+  --surface-hover: #222634;
+
+  --border: #262b38;
+  --border-strong: #39404f;
+
+  --ink: #f2f4f8;
+  --ink-secondary: #a8b0be;
+  --ink-tertiary: #6f7787;
+  --ink-inverse: #0b0d12;
+
+  --accent: #6b93ff;
+  --accent-hover: #85a5ff;
+  --accent-soft: #1a2340;
+  --accent-ink: #b9cbff;
+
+  --success: #45c79a;
+  --success-soft: #10261f;
+  --warning: #e0a44a;
+  --warning-soft: #2a2011;
+  --danger: #f2857c;
+  --danger-soft: #2c1614;
+
+  --suggested: #b18cff;
+  --suggested-soft: #221a3a;
+
+  --shadow-sm: 0 1px 2px rgb(0 0 0 / 0.4);
+  --shadow-md: 0 6px 16px rgb(0 0 0 / 0.45);
+  --shadow-lg: 0 20px 48px rgb(0 0 0 / 0.55);
+}
+
+/* --- Reset -------------------------------------------------------------- */
+
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+* {
+  margin: 0;
+}
+
+html,
+body,
+#root {
+  height: 100%;
+}
+
+body {
+  font-family: var(--font-sans);
+  font-size: var(--text-body);
+  line-height: var(--leading-normal);
+  color: var(--ink);
+  background: var(--ground);
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+  /* The workspace manages its own scrolling; the page itself never scrolls. */
+  overflow: hidden;
+  overscroll-behavior: none;
+}
+
+button,
+input,
+select,
+textarea {
+  font: inherit;
+  color: inherit;
+}
+
+button {
+  cursor: pointer;
+  border: none;
+  background: none;
+  padding: 0;
+}
+
+:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+  border-radius: var(--radius-sm);
+}
+
+.numeric {
+  font-family: var(--font-technical);
+  font-variant-numeric: tabular-nums;
+  letter-spacing: -0.01em;
+}
+
+.visually-hidden {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
+  border: 0;
+}
+
+/*
+ * Reduced motion (B.16): movement is removed and durations collapse, but
+ * nothing is communicated by animation alone, so no state is lost here.
+ */
+@media (prefers-reduced-motion: reduce) {
+  :root {
+    --duration-micro: 1ms;
+    --duration-normal: 1ms;
+    --duration-large: 1ms;
+  }
+
+  *,
+  *::before,
+  *::after {
+    animation-duration: 1ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 1ms !important;
+    scroll-behavior: auto !important;
+  }
+}

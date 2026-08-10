@@ -203,8 +203,7 @@ export function composePlan(input: ComposeInput): ComposeResult {
     );
   }
 
-  const orientation = input.orientation ?? template.defaultOrientation;
-  const fit = chooseSheetAndScale(worldBounds, template, input, orientation);
+  const fit = chooseSheetAndScale(worldBounds, template, input);
   if (!fit) {
     return {
       ok: false,
@@ -215,6 +214,7 @@ export function composePlan(input: ComposeInput): ComposeResult {
     };
   }
 
+  const orientation = fit.orientation;
   const dimensions = sheetDimensions(fit.sheet, orientation);
   const frame: Rect = {
     xMm: MARGIN_MM,
@@ -319,18 +319,24 @@ function drawingFrame(frame: Rect): Rect {
 
 interface Fit {
   readonly sheet: SheetId;
+  readonly orientation: Orientation;
   readonly scaleDenominator: number;
 }
 
 /**
  * Smallest sheet at the largest scale that still fits, which is what a
  * draughtsman reaches for: detail first, paper second.
+ *
+ * Sheet is the outer loop and orientation the innermost, so a wide site is
+ * turned sideways on the paper it already fits rather than promoted to the
+ * next size up. Fixing the orientation instead printed a broad parcel at 1:500
+ * in the middle of an otherwise empty sheet; making scale the outer loop
+ * over-corrected, reaching for A3 when a landscape A4 would do.
  */
 function chooseSheetAndScale(
   bounds: { min: Coordinates; max: Coordinates },
   template: JurisdictionTemplate,
   input: ComposeInput,
-  orientation: Orientation,
 ): Fit | null {
   const worldWidth = bounds.max.easting - bounds.min.easting;
   const worldHeight = bounds.max.northing - bounds.min.northing;
@@ -342,23 +348,31 @@ function chooseSheetAndScale(
   const scales = input.scaleDenominator
     ? [input.scaleDenominator]
     : STANDARD_SCALES;
+  const orientations: readonly Orientation[] = input.orientation
+    ? [input.orientation]
+    : template.defaultOrientation === 'portrait'
+      ? ['portrait', 'landscape']
+      : ['landscape', 'portrait'];
 
   for (const sheet of sheets) {
-    const dimensions = sheetDimensions(sheet, orientation);
-    const frame = drawingFrame({
-      xMm: MARGIN_MM,
-      yMm: MARGIN_MM,
-      widthMm: dimensions.widthMm - MARGIN_MM * 2,
-      heightMm: dimensions.heightMm - MARGIN_MM * 2,
-    });
-
     for (const scaleDenominator of scales) {
       const perMm = worldUnitsPerMm(scaleDenominator, input.model.crs.units);
-      if (
-        (worldWidth * padding) / perMm <= frame.widthMm &&
-        (worldHeight * padding) / perMm <= frame.heightMm
-      ) {
-        return { sheet, scaleDenominator };
+
+      for (const orientation of orientations) {
+        const dimensions = sheetDimensions(sheet, orientation);
+        const frame = drawingFrame({
+          xMm: MARGIN_MM,
+          yMm: MARGIN_MM,
+          widthMm: dimensions.widthMm - MARGIN_MM * 2,
+          heightMm: dimensions.heightMm - MARGIN_MM * 2,
+        });
+
+        if (
+          (worldWidth * padding) / perMm <= frame.widthMm &&
+          (worldHeight * padding) / perMm <= frame.heightMm
+        ) {
+          return { sheet, orientation, scaleDenominator };
+        }
       }
     }
   }

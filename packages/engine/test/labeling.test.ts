@@ -354,8 +354,9 @@ test('a label pointing at nothing is reported as unresolved, never guessed', () 
 });
 
 test('crowding forces displacement, and drops are reported with a reason', () => {
-  // Ten area labels all want the same centroid; only one can have it.
-  const crowd: LabelSpecification[] = Array.from({ length: 10 }, (_, i) => ({
+  // Far more interior labels than there are interior positions: the first few
+  // are placed or displaced, and the rest have to be dropped.
+  const crowd: LabelSpecification[] = Array.from({ length: 80 }, (_, i) => ({
     id: `lbl_crowd_${i}`,
     subject: { kind: 'ring', ringId: 'ring_1' },
     role: 'area',

@@ -462,11 +462,12 @@ function insideCandidates(
   const middle = centroid(vertices);
   const candidates: Candidate[] = [{ position: toPlanPoint(middle), rotation: 0, viaLeader: false }];
 
-  // Shift up and down inside the shape before giving up on an interior label,
-  // so an area label and a dimension label can share one building.
-  for (const bearing of [0, 180, 90, 270]) {
-    for (const ring of [1, 2]) {
-      const shifted = forward(middle, bearing, cc.height * 1.6 * ring);
+  // Search outward from the centre before giving up on an interior label. A
+  // parcel label whose centroid falls on the house has plenty of clear garden
+  // to sit in, and finding it beats dragging a leader line across the building.
+  for (let ring = 1; ring <= 5; ring += 1) {
+    for (const bearing of [0, 180, 90, 270, 45, 135, 225, 315]) {
+      const shifted = forward(middle, bearing, cc.height * 2 * ring);
       if (pointInPolygon(shifted, vertices)) {
         candidates.push({ position: toPlanPoint(shifted), rotation: 0, viaLeader: false });
       }

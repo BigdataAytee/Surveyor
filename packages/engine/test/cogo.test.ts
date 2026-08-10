@@ -204,6 +204,35 @@ test('a ring whose start point has no coordinates fails with a named subject', (
   assert.deepEqual(result.subjects, ['PT1']);
 });
 
+test('a boundary with a gap in the chain is rejected, not walked shut', () => {
+  // PT3 removed: the remaining lines no longer join, and closing the gap
+  // silently would report a valid ring enclosing nothing.
+  const broken = ringOf([
+    { from: 'PT1', to: 'PT2', provenance: { source: 'measured' } },
+    { from: 'PT4', to: 'PT1', provenance: { source: 'measured' } },
+  ]);
+
+  const result = computeRing(broken, SQUARE_POINTS);
+  assert.equal(result.ok, false);
+  if (result.ok) return;
+  assert.match(result.reason, /broken/);
+  assert.ok(result.subjects.includes('PT2'));
+  assert.ok(result.subjects.includes('PT4'));
+});
+
+test('a closed ring that does not return to its start is rejected', () => {
+  const openEnded = ringOf([
+    { from: 'PT1', to: 'PT2', provenance: { source: 'measured' } },
+    { from: 'PT2', to: 'PT3', provenance: { source: 'measured' } },
+    { from: 'PT3', to: 'PT4', provenance: { source: 'measured' } },
+  ]);
+
+  const result = computeRing(openEnded, SQUARE_POINTS);
+  assert.equal(result.ok, false);
+  if (result.ok) return;
+  assert.match(result.reason, /does not return to where it started/);
+});
+
 test('a segment with neither endpoint nor bearing fails rather than guessing', () => {
   const result = computeRing(
     ringOf([

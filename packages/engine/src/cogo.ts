@@ -310,11 +310,37 @@ export function computeRing(
   const resolved: ResolvedSegment[] = [];
   let cursor: Coordinates = startPoint.coordinates;
 
-  for (const segment of ring.segments) {
+  for (const [index, segment] of ring.segments.entries()) {
+    // The walk advances from wherever the last segment ended, so a gap in the
+    // chain would be silently closed up: deleting a corner from a four-sided
+    // parcel left two disconnected lines that computed as a valid ring of zero
+    // area. The boundary has to actually join up.
+    const previous = ring.segments[index - 1];
+    if (previous && previous.to !== segment.from) {
+      return {
+        ok: false,
+        reason:
+          `The boundary is broken: it runs to ${previous.to} and then starts ` +
+          `again at ${segment.from}. Those corners need joining up.`,
+        subjects: [ring.id, previous.to, segment.from],
+      };
+    }
+
     const step = resolveSegment(segment, cursor, byId);
     if (!step.ok) return step;
     resolved.push(step.segment);
     cursor = step.segment.end;
+  }
+
+  const last = ring.segments[ring.segments.length - 1]!;
+  if (ring.closed && last.to !== first.from) {
+    return {
+      ok: false,
+      reason:
+        `The boundary does not return to where it started: it ends at ` +
+        `${last.to} rather than ${first.from}.`,
+      subjects: [ring.id, last.to, first.from],
+    };
   }
 
   // Misclosure is the gap between where the traverse ends and where it began.

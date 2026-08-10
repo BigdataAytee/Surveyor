@@ -1,0 +1,56 @@
+.enter {
+  animation-fill-mode: both;
+  animation-timing-function: var(--ease-decelerate);
+}
+
+.enter--fade {
+  animation-name: enter-fade;
+  animation-duration: var(--duration-normal);
+}
+
+.enter--slide-up {
+  animation-name: enter-slide-up;
+  animation-duration: var(--duration-normal);
+}
+
+.enter--scale {
+  animation-name: enter-scale;
+  animation-duration: var(--duration-normal);
+}
+
+.enter--spring {
+  animation-name: enter-scale;
+  animation-duration: var(--duration-large);
+  animation-timing-function: var(--ease-spring);
+}
+
+@keyframes enter-fade {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+@keyframes enter-slide-up {
+  from {
+    opacity: 0;
+    transform: translateY(8px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+@keyframes enter-scale {
+  from {
+    opacity: 0;
+    transform: scale(0.96);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}

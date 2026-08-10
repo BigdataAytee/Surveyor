@@ -1,0 +1,346 @@
+.panel {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+}
+
+.panel__toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+}
+
+.panel__count {
+  font-size: var(--text-caption);
+  color: var(--ink-tertiary);
+}
+
+.panel__section {
+  font-size: var(--text-caption);
+  font-weight: var(--weight-semibold);
+  color: var(--ink-secondary);
+  margin-bottom: var(--space-2);
+}
+
+.panel__body {
+  font-size: var(--text-caption);
+  color: var(--ink-secondary);
+}
+
+.panel__value {
+  font-size: var(--text-body);
+  font-weight: var(--weight-medium);
+}
+
+.panel__footer {
+  position: sticky;
+  bottom: calc(var(--space-4) * -1);
+  margin: 0 calc(var(--space-4) * -1) calc(var(--space-4) * -1);
+  padding: var(--space-3) var(--space-4);
+  /* Opaque, so list content scrolling underneath does not show through. */
+  background: var(--surface-raised);
+  border-top: 1px solid var(--border);
+}
+
+/* --- Points ------------------------------------------------------------- */
+
+.points {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  list-style: none;
+  padding: 0;
+}
+
+.point {
+  padding: var(--space-3);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--surface);
+}
+
+.point__head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-2);
+  margin-bottom: var(--space-2);
+}
+
+.point__head-right {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.point__id {
+  font-weight: var(--weight-semibold);
+  font-size: var(--text-subheading);
+}
+
+.point__fields {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: var(--space-2);
+}
+
+.point__field {
+  display: grid;
+  grid-template-columns: 5.5rem 1fr;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.point__field > span {
+  font-size: var(--text-caption);
+  color: var(--ink-secondary);
+}
+
+/* B.10: the mobile list becomes a real table when there is room for one. */
+@media (min-width: 768px) {
+  .point {
+    display: grid;
+    grid-template-columns: 6rem 1fr auto;
+    align-items: center;
+    gap: var(--space-3);
+  }
+
+  .point__head {
+    margin-bottom: 0;
+  }
+
+  .point__fields {
+    grid-template-columns: 1fr 1fr;
+  }
+
+  .point__field {
+    grid-template-columns: 4.5rem 1fr;
+  }
+}
+
+/* --- Importer ----------------------------------------------------------- */
+
+.importer {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+}
+
+.importer__input {
+  width: 100%;
+  padding: var(--space-3);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--surface);
+  color: var(--ink);
+  font-size: var(--text-caption);
+  resize: vertical;
+}
+
+.importer__input:focus {
+  outline: none;
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px var(--accent-soft);
+}
+
+.importer__result {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  align-items: flex-start;
+}
+
+.importer__problems {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  list-style: none;
+  padding: 0;
+  font-size: var(--text-caption);
+  color: var(--ink-secondary);
+}
+
+.importer__problems code {
+  display: block;
+  margin-top: 2px;
+  padding: 2px var(--space-2);
+  border-radius: var(--radius-sm);
+  background: var(--surface-sunken);
+  font-family: var(--font-technical);
+  font-size: var(--text-micro);
+  color: var(--ink-tertiary);
+}
+
+/* --- Issues ------------------------------------------------------------- */
+
+.issues {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  list-style: none;
+  padding: 0;
+}
+
+.issue {
+  padding: var(--space-3);
+  border: 1px solid var(--border);
+  border-left-width: 3px;
+  border-radius: var(--radius-md);
+  background: var(--surface);
+}
+
+.issue--error {
+  border-left-color: var(--danger);
+}
+
+.issue--needs-review {
+  border-left-color: var(--warning);
+}
+
+.issue__head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-2);
+  margin-bottom: var(--space-2);
+}
+
+.issue__subjects {
+  font-family: var(--font-technical);
+  font-size: var(--text-micro);
+  color: var(--accent);
+  min-height: 28px;
+}
+
+.issue__message {
+  font-size: var(--text-caption);
+  line-height: var(--leading-normal);
+}
+
+.issue__detail {
+  margin-top: var(--space-2);
+  font-size: var(--text-micro);
+  color: var(--ink-tertiary);
+}
+
+.issue__detail summary {
+  cursor: pointer;
+  min-height: 24px;
+  display: inline-flex;
+  align-items: center;
+}
+
+.issue__options {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+  margin-top: var(--space-3);
+}
+
+.closure {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: var(--space-3);
+}
+
+.closure dt {
+  font-size: var(--text-micro);
+  color: var(--ink-tertiary);
+}
+
+.closure dd {
+  font-size: var(--text-caption);
+  font-weight: var(--weight-medium);
+}
+
+/* --- Export ------------------------------------------------------------- */
+
+.export__success {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+}
+
+.export__tick {
+  display: grid;
+  place-items: center;
+  width: 36px;
+  height: 36px;
+  flex: none;
+  border-radius: 50%;
+  background: var(--success-soft);
+  color: var(--success);
+}
+
+.export__title {
+  font-weight: var(--weight-semibold);
+}
+
+.export__facts {
+  font-size: var(--text-caption);
+  color: var(--ink-secondary);
+}
+
+.export__actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+}
+
+.export__actions .btn {
+  flex: 1 1 auto;
+}
+
+.export__warnings {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  padding-left: var(--space-4);
+  font-size: var(--text-caption);
+  color: var(--ink-secondary);
+}
+
+.gate {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  list-style: none;
+  padding: 0;
+}
+
+.gate__item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+  padding: var(--space-3);
+  border: 1px solid var(--suggested);
+  border-radius: var(--radius-md);
+  font-size: var(--text-caption);
+}
+
+.gate__actions {
+  display: flex;
+  gap: var(--space-1);
+  flex: none;
+}
+
+/* --- Plan preview ------------------------------------------------------- */
+
+.preview-frame {
+  padding: var(--space-3);
+  border-radius: var(--radius-md);
+  background: var(--surface-sunken);
+  overflow: auto;
+  max-height: 46vh;
+}
+
+.preview-frame__sheet svg {
+  display: block;
+  width: 100%;
+  height: auto;
+  max-width: 100%;
+  border-radius: var(--radius-sm);
+  box-shadow: var(--shadow-md);
+}

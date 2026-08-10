@@ -1,0 +1,269 @@
+/*
+ * The drawing surface (B.9, B.16).
+ *
+ * The canvas keeps its own visual language, deliberately separate from the
+ * application chrome: it stays a light drafting surface even in dark mode,
+ * because a survey plan reads better as paper. Geometry dominates; the grid is
+ * present but almost silent.
+ */
+
+.canvas {
+  position: relative;
+  width: 100%;
+  height: 100%;
+  overflow: hidden;
+  background: var(--paper);
+  touch-action: none;
+  user-select: none;
+  -webkit-user-select: none;
+  cursor: grab;
+}
+
+.canvas:active {
+  cursor: grabbing;
+}
+
+.canvas__svg {
+  display: block;
+}
+
+.canvas__grid line {
+  stroke: var(--paper-grid);
+  stroke-width: 1;
+  shape-rendering: crispEdges;
+}
+
+/* --- Elements ----------------------------------------------------------- */
+
+.element__shape {
+  fill: none;
+  stroke: var(--draw-feature);
+  stroke-width: 1.5;
+  stroke-linejoin: round;
+  stroke-linecap: round;
+  vector-effect: non-scaling-stroke;
+  transition:
+    stroke var(--duration-micro) var(--ease-standard),
+    stroke-width var(--duration-micro) var(--ease-standard);
+}
+
+/* A wide transparent stroke beneath each line gives it a real touch target
+   without thickening the drawing (B.16). */
+.element__hit-line {
+  fill: none;
+  stroke: transparent;
+  stroke-width: 24;
+  stroke-linejoin: round;
+}
+
+.element__hit {
+  fill: transparent;
+}
+
+.element__marker {
+  fill: var(--paper);
+  stroke: var(--draw-point);
+  stroke-width: 1.5;
+}
+
+.element--boundary .element__shape,
+.element--boundary-curve .element__shape {
+  stroke: var(--draw-boundary);
+  stroke-width: 2.25;
+}
+
+.element--building .element__shape {
+  stroke: var(--draw-feature);
+  fill: var(--draw-feature-fill);
+  stroke-width: 1.5;
+}
+
+.element--road .element__shape,
+.element--road-centreline .element__shape {
+  stroke: var(--draw-road);
+  stroke-width: 1.5;
+}
+
+.element--fence .element__shape {
+  stroke: var(--draw-road);
+  stroke-dasharray: 6 3;
+}
+
+.element--access .element__shape {
+  stroke: var(--draw-road);
+  stroke-dasharray: 4 4;
+}
+
+.element--easement .element__shape {
+  stroke: var(--suggested);
+  stroke-dasharray: 8 4;
+}
+
+.element--water .element__shape {
+  stroke: #3b82f6;
+  fill: #eff6ff;
+}
+
+.element--vegetation .element__shape {
+  stroke: #16a34a;
+  fill: #f0fdf4;
+}
+
+/* --- Selection and highlight -------------------------------------------- */
+
+.element.is-selected .element__shape {
+  stroke: var(--draw-selection);
+  stroke-width: 3;
+}
+
+.element.is-selected .element__marker {
+  stroke: var(--draw-selection);
+  stroke-width: 2.5;
+  r: 5;
+}
+
+/*
+ * B.13: when the assistant refers to an object it pulses. Subtle feedback, no
+ * aggressive glow — and it settles rather than looping forever.
+ */
+.element.is-highlighted .element__shape,
+.element.is-highlighted .element__marker {
+  stroke: var(--draw-selection);
+  animation: element-pulse 700ms var(--ease-standard) 2;
+}
+
+@keyframes element-pulse {
+  0%,
+  100% {
+    stroke-opacity: 1;
+    stroke-width: 2.25;
+  }
+  50% {
+    stroke-opacity: 0.45;
+    stroke-width: 5;
+  }
+}
+
+/* --- Suggestions -------------------------------------------------------- */
+
+.element.is-suggested .element__shape,
+.preview__shape {
+  stroke: var(--suggested);
+  stroke-dasharray: 7 4;
+  fill: color-mix(in srgb, var(--suggested) 8%, transparent);
+  animation: preview-in var(--duration-large) var(--ease-decelerate) both;
+}
+
+@keyframes preview-in {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+.preview__shape {
+  stroke-width: 2;
+  vector-effect: non-scaling-stroke;
+}
+
+/* --- Labels ------------------------------------------------------------- */
+
+.label__text {
+  font-family: var(--font-sans);
+  font-size: 11px;
+  fill: var(--draw-label);
+  paint-order: stroke;
+  /* A halo keeps text readable where it must sit near a line. */
+  stroke: var(--paper);
+  stroke-width: 3.5;
+  stroke-linejoin: round;
+  pointer-events: none;
+}
+
+.label--point-id .label__text {
+  font-weight: 600;
+}
+
+.label--area .label__text,
+.label--feature-name .label__text {
+  font-size: 12px;
+}
+
+.label__leader {
+  stroke: var(--ink-tertiary);
+  stroke-width: 1;
+  vector-effect: non-scaling-stroke;
+}
+
+.label.is-suggested .label__text {
+  fill: var(--suggested);
+  font-style: italic;
+}
+
+/* --- Overlays ----------------------------------------------------------- */
+
+.canvas__zoom {
+  position: absolute;
+  right: var(--space-3);
+  top: var(--space-3);
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  border-radius: var(--radius-md);
+  overflow: hidden;
+  box-shadow: var(--shadow-md);
+  background: var(--border);
+}
+
+.canvas__zoom button {
+  width: var(--touch-min);
+  height: var(--touch-min);
+  background: var(--surface);
+  color: var(--ink-secondary);
+  font-size: 1.05rem;
+  transition: background-color var(--duration-micro) var(--ease-standard);
+}
+
+.canvas__zoom button:hover {
+  background: var(--surface-hover);
+  color: var(--ink);
+}
+
+.canvas__north {
+  position: absolute;
+  right: var(--space-4);
+  bottom: var(--space-6);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 2px;
+  color: var(--draw-boundary);
+  font-size: var(--text-micro);
+  font-weight: var(--weight-semibold);
+  pointer-events: none;
+}
+
+.canvas__north path {
+  fill: currentColor;
+}
+
+.canvas__scale {
+  position: absolute;
+  left: var(--space-4);
+  bottom: var(--space-4);
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  font-size: var(--text-micro);
+  color: var(--ink-secondary);
+  pointer-events: none;
+}
+
+.canvas__scale-bar {
+  height: 6px;
+  border: 1px solid var(--draw-boundary);
+  border-top: none;
+  transition: width var(--duration-micro) linear;
+}
