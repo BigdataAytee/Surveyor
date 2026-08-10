@@ -61,6 +61,19 @@ reports real progress rather than animating a timer.
 - **Nothing unconfirmed is exported.** `composePlan` refuses while any label is
   still `ai-suggested`, and names the ones blocking it.
 
+### Working in the app
+
+- **Select / Draw / Measure** (B.3). Draw places boundary corners by tapping;
+  a new corner is inserted into the edge it sits nearest, so the shape does not
+  fold over itself. Measure reports bearing and distance between two taps,
+  through the same COGO call the plan's dimensions use.
+- **Import** accepts a pasted table or an uploaded `.csv`/`.txt`. The extractor
+  works out the delimiter, the header and the column roles, and scores itself.
+  Where it genuinely cannot tell — easting/northing order with no headings — it
+  asks rather than picking the commoner convention.
+- **Work is saved** to local storage as it changes, debounced. Pending AI
+  suggestions deliberately do not survive a reload.
+
 ### What the AI layer does
 
 `apps/web/src/ai/assistant.ts` decides intent: what to say, what to offer, and
@@ -73,13 +86,13 @@ proposal shapes and the trust loop are the contract.
 ## Testing
 
 ```bash
-npm test                                    # 84 tests across contracts and engine
+npm test                                    # 101 tests across contracts and engine
 npm run smoke --workspace @surveyor/web     # browser flows (needs a preview server)
 ```
 
-The smoke test drives the trust loop, the export gate and survey-data editing in
-a real browser, and fails on console errors, on-screen label collisions, or
-horizontal overflow at any breakpoint.
+The smoke test drives the trust loop, the export gate, the drawing and measuring
+tools, import and persistence in a real browser, and fails on console errors,
+on-screen label collisions, or horizontal overflow at any breakpoint.
 
 ```bash
 npm run build --workspace @surveyor/web
@@ -90,6 +103,14 @@ npm run smoke --workspace @surveyor/web
 ## Status
 
 The pipeline, the exporters and the workspace are built and working end to end.
-Not yet done: Document AI/OCR ingestion has its contract and confidence plumbing
-(`DocumentExtraction` in `packages/engine/src/input.ts`) but no extractor behind
-it, and the assistant's planner is rule-based rather than a language model.
+
+One thing is deliberately unfinished: the assistant's planner is rule-based
+rather than a language model, because no model is wired up here. The seam is
+exact — `apps/web/src/ai/assistant.ts` is the only file that would change, and
+an LLM would get the authority the rule planner has, which is none over
+coordinates or survey values.
+
+Text extraction (`packages/engine/src/document.ts`) infers structure and scores
+its confidence for pasted and uploaded tables. Vision/OCR plugs into the same
+seam: produce a `DocumentExtraction` with honest per-field confidences and
+nothing downstream changes.

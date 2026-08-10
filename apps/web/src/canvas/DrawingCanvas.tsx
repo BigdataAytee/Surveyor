@@ -21,7 +21,7 @@ import {
 } from 'react';
 
 import type { Coordinates, PlacedLabel, SiteFeature } from '@surveyor/contracts';
-import type { Drawing, DrawingElement } from '@surveyor/engine';
+import { formatBearing, inverse, type Drawing, type DrawingElement } from '@surveyor/engine';
 
 import {
   distanceToSegment,
@@ -29,6 +29,7 @@ import {
   gridSpacing,
   panBy,
   toScreen,
+  toWorld,
   zoomAbout,
   type ScreenPoint,
   type Size,
@@ -56,7 +57,14 @@ export interface CanvasProps {
   readonly onSelect: (id: string | null) => void;
   readonly showLabels?: boolean;
   readonly showGrid?: boolean;
+  /** The active tool (B.3). Select hit-tests; Draw adds corners; Measure probes. */
+  readonly tool?: CanvasTool;
+  readonly onDrawPoint?: (at: Coordinates) => void;
+  /** Units for the measurement readout. */
+  readonly unit?: string;
 }
+
+export type CanvasTool = 'select' | 'draw' | 'measure';
 
 const TAP_SLOP_PX = 8;
 const HIT_TOLERANCE_PX = 14;
@@ -70,7 +78,13 @@ export function DrawingCanvas({
   onSelect,
   showLabels = true,
   showGrid = true,
+  tool = 'select',
+  onDrawPoint,
+  unit = 'm',
 }: CanvasProps) {
+  // Measurement is ephemeral: it answers a question and is discarded, so it
+  // never touches the Survey Data Model.
+  const [measure, setMeasure] = useState<readonly Coordinates[]>([]);
   const hostRef = useRef<HTMLDivElement>(null);
   const [size, setSize] = useState<Size>({ width: 0, height: 0 });
   const [viewport, setViewport] = useState<Viewport | null>(null);
@@ -192,7 +206,22 @@ export function DrawingCanvas({
 
       if (gesture.current.moved) return;
 
+      const world = toWorld(point, viewport, size);
+
+      if (tool === 'draw') {
+        onDrawPoint?.(world);
+        return;
+      }
+      if (tool === 'measure') {
+        // Two taps make a measurement; a third starts a fresh one.
+        setMeasure((current) => (current.length >= 2 ? [world] : [...current, world]));
+        return;
+      }
+
       // Double tap zooms in about the tap, matching the pinch anchor rule.
+      //
+      // Only in select mode: placing two corners in quick succession is the
+      // normal way to draw, and it must not be mistaken for a zoom gesture.
       const now = Date.now();
       if (now - gesture.current.lastTapAt < 300) {
         gesture.current.lastTapAt = 0;
@@ -203,8 +232,14 @@ export function DrawingCanvas({
 
       onSelect(hitTest(point, drawing, viewport, size));
     },
-    [drawing, localPoint, onSelect, size, viewport],
+    [drawing, localPoint, onDrawPoint, onSelect, size, tool, viewport],
   );
+
+  // Switching tools abandons a half-finished measurement rather than leaving
+  // a stale line floating over the drawing.
+  useEffect(() => {
+    if (tool !== 'measure') setMeasure([]);
+  }, [tool]);
 
   const onWheel = useCallback(
     (event: React.WheelEvent) => {
@@ -301,7 +336,23 @@ export function DrawingCanvas({
             ))}
           </g>
         ) : null}
+
+        {ready && measure.length > 0 ? (
+          <Measurement points={measure} project={project} unit={unit} />
+        ) : null}
       </svg>
+
+      {tool !== 'select' ? (
+        <div className="canvas__hint" role="status">
+          {tool === 'draw'
+            ? 'Tap to place a corner'
+            : measure.length === 0
+              ? 'Tap the first point'
+              : measure.length === 1
+                ? 'Tap the second point'
+                : 'Tap to start a new measurement'}
+        </div>
+      ) : null}
 
       {ready ? (
         <>
@@ -449,6 +500,48 @@ function Label({
 // ---------------------------------------------------------------------------
 // Overlays
 // ---------------------------------------------------------------------------
+
+/**
+ * The measure tool's readout. Bearing and distance come from the COGO engine,
+ * the same call the plan's dimensions use — a measurement the user takes and a
+ * dimension printed on the sheet must never disagree.
+ */
+function Measurement({
+  points,
+  project,
+  unit,
+}: {
+  readonly points: readonly Coordinates[];
+  readonly project: Project;
+  readonly unit: string;
+}) {
+  const [from, to] = points;
+  if (!from) return null;
+
+  const a = project(from);
+  const b = to ? project(to) : null;
+  const reading = to ? inverse(from, to) : null;
+
+  return (
+    <g className="measure">
+      <circle className="measure__node" cx={a.x} cy={a.y} r={5} />
+      {b && reading ? (
+        <>
+          <line className="measure__line" x1={a.x} y1={a.y} x2={b.x} y2={b.y} />
+          <circle className="measure__node" cx={b.x} cy={b.y} r={5} />
+          <text
+            className="measure__readout"
+            x={(a.x + b.x) / 2}
+            y={(a.y + b.y) / 2 - 12}
+            textAnchor="middle"
+          >
+            {formatBearing(reading.bearing, 'quadrant')} · {reading.distance.toFixed(2)} {unit}
+          </text>
+        </>
+      ) : null}
+    </g>
+  );
+}
 
 function ZoomControls({
   onZoomIn,

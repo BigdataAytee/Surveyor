@@ -9,9 +9,11 @@
 
 import { useCallback, useEffect, useMemo, useState } from 'react';
 
-import { contextFor, placeLabels } from '@surveyor/engine';
+import { contextFor, placeLabels, UNIT_ABBREVIATION } from '@surveyor/engine';
 
-import { DrawingCanvas } from '../canvas/DrawingCanvas.js';
+import { DrawingCanvas, type CanvasTool } from '../canvas/DrawingCanvas.js';
+import { PropertiesSheet } from '../panels/PropertiesSheet.js';
+import { Segmented } from '../ui/primitives.js';
 import { AISheet } from '../ai/AISheet.js';
 import { DataSheet } from '../panels/DataSheet.js';
 import { ExportDialog } from '../panels/ExportDialog.js';
@@ -30,7 +32,7 @@ import { FadeIn } from '../ui/motion.js';
 import { EMPTY_MODEL, useProject } from '../state/store.js';
 import './workspace.css';
 
-type Panel = 'ai' | 'data' | 'validation' | 'export' | 'layers' | null;
+type Panel = 'ai' | 'data' | 'validation' | 'export' | 'layers' | 'properties' | null;
 
 /** Cap height the canvas stylesheet draws labels at, and its paper equivalent. */
 const CANVAS_TEXT_PX = 11;
@@ -53,6 +55,7 @@ export function Workspace() {
   const [showLabels, setShowLabels] = useState(true);
   const [showGrid, setShowGrid] = useState(true);
   const [theme, setTheme] = useState<'light' | 'dark'>('light');
+  const [tool, setTool] = useState<CanvasTool>('select');
 
   useEffect(() => {
     document.documentElement.dataset.theme = theme;
@@ -205,6 +208,9 @@ export function Workspace() {
               highlightId={state.highlightId}
               showLabels={showLabels}
               showGrid={showGrid}
+              tool={tool}
+              unit={UNIT_ABBREVIATION[state.model.crs.units]}
+              onDrawPoint={(at) => dispatch({ type: 'add-boundary-point', at })}
               onSelect={(id) => dispatch({ type: 'select', id })}
             />
           )}
@@ -230,9 +236,27 @@ export function Workspace() {
       <ContextualToolbar
         selectedId={state.selectedId}
         onClear={() => dispatch({ type: 'select', id: null })}
-        onOpenData={() => openPanel('data')}
-        onOpenLayers={() => openPanel('layers')}
+        onOpenProperties={() => openPanel('properties')}
       />
+
+      {/* B.3: the tool row sits between the drawing and the tab bar. */}
+      <div className="toolbar" role="toolbar" aria-label="Drawing tools">
+        <Segmented
+          ariaLabel="Drawing tool"
+          value={tool}
+          onChange={(next) => {
+            setTool(next);
+            // Leaving select mode clears the selection, so the contextual
+            // toolbar does not linger over a tool it has nothing to do with.
+            if (next !== 'select') dispatch({ type: 'select', id: null });
+          }}
+          options={[
+            { value: 'select', label: 'Select' },
+            { value: 'draw', label: 'Draw' },
+            { value: 'measure', label: 'Measure' },
+          ]}
+        />
+      </div>
 
       <nav className="tabbar" aria-label="Main">
         <TabButton label="Assistant" glyph="✦" onClick={() => openPanel('ai')} />
@@ -280,6 +304,18 @@ export function Workspace() {
         size="full"
       >
         <ExportDialog onClose={() => setPanel(null)} />
+      </BottomSheet>
+
+      <BottomSheet
+        open={panel === 'properties'}
+        onClose={() => setPanel(null)}
+        title="Properties"
+        subtitle={state.selectedId ?? undefined}
+      >
+        <PropertiesSheet
+          element={state.selectedId ? selectedElement(pipeline, state.selectedId) : undefined}
+          onClose={() => setPanel(null)}
+        />
       </BottomSheet>
 
       <BottomSheet open={panel === 'layers'} onClose={() => setPanel(null)} title="Layers">
@@ -350,23 +386,16 @@ function TabButton({
 function ContextualToolbar({
   selectedId,
   onClear,
-  onOpenData,
-  onOpenLayers,
+  onOpenProperties,
 }: {
   readonly selectedId: string | null;
   readonly onClear: () => void;
-  readonly onOpenData: () => void;
-  readonly onOpenLayers: () => void;
+  readonly onOpenProperties: () => void;
 }) {
-  const { pipeline } = useProject();
+  const { pipeline, dispatch } = useProject();
   if (!selectedId) return null;
 
-  const element = pipeline.ok || pipeline.drawing
-    ? (pipeline.drawing?.layers ?? [])
-        .flatMap((layer) => layer.elements)
-        .find((e) => e.id === selectedId)
-    : undefined;
-
+  const element = selectedElement(pipeline, selectedId);
   const kind =
     element?.subject.kind === 'segment'
       ? 'Boundary line'
@@ -384,14 +413,22 @@ function ContextualToolbar({
           <span className="contextbar__id numeric">{selectedId}</span>
         </span>
         <div className="contextbar__actions">
-          {element?.subject.kind === 'point' ? (
-            <Button size="sm" onClick={onOpenData}>
-              Edit
+          <Button size="sm" onClick={onOpenProperties}>
+            Properties
+          </Button>
+          {/* Only offer deletion for things that can be deleted on their own. */}
+          {element?.subject.kind === 'feature' ? (
+            <Button
+              size="sm"
+              variant="danger"
+              onClick={() => {
+                if (element.subject.kind !== 'feature') return;
+                dispatch({ type: 'remove-feature', id: element.subject.featureId });
+              }}
+            >
+              Delete
             </Button>
           ) : null}
-          <Button size="sm" onClick={onOpenLayers}>
-            Layers
-          </Button>
           <Button size="sm" variant="ghost" onClick={onClear} aria-label="Clear selection">
             ✕
           </Button>
@@ -399,6 +436,15 @@ function ContextualToolbar({
       </div>
     </FadeIn>
   );
+}
+
+function selectedElement(
+  pipeline: ReturnType<typeof useProject>['pipeline'],
+  id: string,
+) {
+  return (pipeline.drawing?.layers ?? [])
+    .flatMap((layer) => layer.elements)
+    .find((element) => element.id === id);
 }
 
 function Toggle({

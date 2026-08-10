@@ -15,6 +15,7 @@ import {
   createContext,
   useCallback,
   useContext,
+  useEffect,
   useMemo,
   useReducer,
   type Dispatch,
@@ -22,6 +23,7 @@ import {
 } from 'react';
 
 import type {
+  Coordinates,
   LabelSpecification,
   SiteFeature,
   SurveyDataModel,
@@ -30,11 +32,13 @@ import type {
 } from '@surveyor/contracts';
 import { confirm } from '@surveyor/contracts';
 import {
+  inverse,
   ringFromPointOrder,
   runPipeline,
   type PipelineResult,
 } from '@surveyor/engine';
 
+import { loadModel, saveModel } from './persistence.js';
 import { SAMPLE_PROJECT } from './sample.js';
 
 // ---------------------------------------------------------------------------
@@ -78,6 +82,9 @@ export type Action =
   | { type: 'select'; id: string | null }
   | { type: 'highlight'; id: string | null }
   | { type: 'add-point'; point: SurveyPoint }
+  | { type: 'add-boundary-point'; at: Coordinates }
+  | { type: 'update-feature'; id: string; feature: SiteFeature }
+  | { type: 'remove-feature'; id: string }
   | { type: 'update-point'; id: string; point: SurveyPoint }
   | { type: 'remove-point'; id: string }
   | { type: 'set-model'; model: SurveyDataModel }
@@ -89,6 +96,60 @@ export type Action =
   | { type: 'redo' };
 
 const HISTORY_LIMIT = 40;
+
+/** Next free PTn, so drawing after a deletion does not reuse a name. */
+function nextPointId(existing: readonly SurveyPoint[]): string {
+  const taken = new Set(existing.map((p) => p.id));
+  for (let n = existing.length + 1; ; n += 1) {
+    const id = `PT${n}`;
+    if (!taken.has(id)) return id;
+  }
+}
+
+/**
+ * The order corners are joined in: the existing ring's order, with any new
+ * points inserted where they fit.
+ *
+ * The established order is preserved rather than re-derived from the point
+ * list, which would silently reshape a boundary whose corners were entered out
+ * of sequence. New corners are inserted into the edge they sit closest to
+ * instead of being appended: tapping near one side of a parcel and having the
+ * corner join on at the far end produces a boundary that crosses itself, which
+ * the Validation Engine then — correctly, but unhelpfully — rejects.
+ */
+function ringOrder(
+  model: SurveyDataModel,
+  points: readonly SurveyPoint[],
+): readonly string[] {
+  const ring = model.boundary[0];
+  const order = ring ? ring.segments.map((segment) => segment.from) : [];
+  const coordinates = new Map(points.map((p) => [p.id, p.coordinates]));
+  const added = points.map((p) => p.id).filter((id) => !order.includes(id));
+
+  for (const id of added) {
+    const at = coordinates.get(id);
+    if (!at || order.length < 3) {
+      order.push(id);
+      continue;
+    }
+
+    // Insert where it lengthens the boundary least — the standard way to add
+    // a vertex to a closed shape without folding it over itself.
+    let best = { index: order.length, cost: Infinity };
+    for (let i = 0; i < order.length; i += 1) {
+      const a = coordinates.get(order[i]!);
+      const b = coordinates.get(order[(i + 1) % order.length]!);
+      if (!a || !b) continue;
+
+      const cost =
+        inverse(a, at).distance + inverse(at, b).distance - inverse(a, b).distance;
+      if (cost < best.cost) best = { index: i + 1, cost };
+    }
+    order.splice(best.index, 0, id);
+  }
+
+  return order;
+}
 
 /** Records the previous model so the change can be undone. */
 function commit(state: ProjectState, model: SurveyDataModel): ProjectState {
@@ -113,6 +174,46 @@ export function reducer(state: ProjectState, action: Action): ProjectState {
         ...state.model,
         points: [...state.model.points, action.point],
       });
+
+    case 'add-boundary-point': {
+      // Drawing a corner on the canvas both creates the point and extends the
+      // ring, so the boundary appears as soon as three exist rather than
+      // waiting for someone to connect them by hand.
+      const id = nextPointId(state.model.points);
+      const points = [
+        ...state.model.points,
+        {
+          id,
+          coordinates: action.at,
+          // Tapped by a person, so it is confirmed rather than measured.
+          provenance: { source: 'user-confirmed' as const },
+        },
+      ];
+      const order = ringOrder(state.model, points);
+
+      return commit(state, {
+        ...state.model,
+        points,
+        boundary: order.length >= 3 ? [ringFromPointOrder('ring_1', order)] : [],
+      });
+    }
+
+    case 'update-feature':
+      return commit(state, {
+        ...state.model,
+        siteFeatures: state.model.siteFeatures.map((f) =>
+          f.id === action.id ? action.feature : f,
+        ),
+      });
+
+    case 'remove-feature':
+      return {
+        ...commit(state, {
+          ...state.model,
+          siteFeatures: state.model.siteFeatures.filter((f) => f.id !== action.id),
+        }),
+        selectedId: state.selectedId === action.id ? null : state.selectedId,
+      };
 
     case 'update-point':
       return commit(state, {
@@ -231,14 +332,20 @@ export function reducer(state: ProjectState, action: Action): ProjectState {
 // Context
 // ---------------------------------------------------------------------------
 
-export const INITIAL_STATE: ProjectState = {
-  model: SAMPLE_PROJECT,
-  suggestions: [],
-  selectedId: null,
-  highlightId: null,
-  past: [],
-  future: [],
-};
+/**
+ * Restored work wins over the sample project, which exists only so a first-time
+ * visitor has something to judge the tool by.
+ */
+export function initialState(): ProjectState {
+  return {
+    model: loadModel() ?? SAMPLE_PROJECT,
+    suggestions: [],
+    selectedId: null,
+    highlightId: null,
+    past: [],
+    future: [],
+  };
+}
 
 /** The empty project, for the "start from scratch" path. */
 export const EMPTY_MODEL: SurveyDataModel = {
@@ -262,12 +369,16 @@ interface Store {
 const StoreContext = createContext<Store | null>(null);
 
 export function ProjectProvider({ children }: { readonly children: ReactNode }) {
-  const [state, dispatch] = useReducer(reducer, INITIAL_STATE);
+  const [state, dispatch] = useReducer(reducer, undefined, initialState);
 
   // Deriving rather than storing is what keeps the canvas, the validation
   // state, and any export in agreement. The model is small enough that
   // re-running the pipeline per edit is comfortably inside a frame.
   const pipeline = useMemo(() => runPipeline(state.model), [state.model]);
+
+  useEffect(() => {
+    saveModel(state.model);
+  }, [state.model]);
 
   const value = useMemo<Store>(
     () => ({

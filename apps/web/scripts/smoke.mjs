@@ -30,6 +30,16 @@ const DESKTOP = { width: 1440, height: 900 };
 
 async function open(name, viewport) {
   const page = await browser.newPage({ viewport, hasTouch: true });
+  // Each check starts from the sample project, not whatever a previous one
+  // persisted, or the tests would depend on the order they ran in. The
+  // sentinel keeps this to the first load: the persistence check reloads the
+  // page and needs what it saved to still be there.
+  await page.addInitScript(() => {
+    if (!window.sessionStorage.getItem('smoke-initialised')) {
+      window.localStorage.clear();
+      window.sessionStorage.setItem('smoke-initialised', '1');
+    }
+  });
   page.on('console', (m) => {
     if (m.type() === 'error') problems.push(`${name}: console error — ${m.text()}`);
   });
@@ -168,6 +178,126 @@ for (const [name, viewport] of [
   expect(!/0 m²/.test(text), 'edit: deleting a corner produced a zero-area boundary');
   expect(/m²/.test(text), 'edit: no area reported after deleting a corner');
   await shot(page, 'edit-after-delete');
+  await page.close();
+}
+
+// --- Drawing and measuring --------------------------------------------------
+
+{
+  const page = await open('tools', PHONE);
+  const before = await page.locator('.element--point').count();
+
+  await page.getByRole('tab', { name: 'Draw' }).click();
+  await page.waitForTimeout(300);
+
+  const canvas = await page.locator('.canvas').boundingBox();
+  await page.mouse.click(canvas.x + canvas.width * 0.3, canvas.y + canvas.height * 0.75);
+  await page.waitForTimeout(400);
+
+  expect(
+    (await page.locator('.element--point').count()) === before + 1,
+    'draw: tapping the canvas did not add a corner',
+  );
+  // A corner added to a valid boundary must leave a valid boundary: appending
+  // it to the end of the ring order folds the shape over itself.
+  expect(
+    !(await page.locator('.banner').isVisible()),
+    'draw: adding a corner broke the boundary',
+  );
+  await shot(page, 'tool-draw');
+
+  await page.getByRole('tab', { name: 'Measure' }).click();
+  await page.waitForTimeout(300);
+  await page.mouse.click(canvas.x + canvas.width * 0.3, canvas.y + canvas.height * 0.4);
+  await page.waitForTimeout(200);
+  await page.mouse.click(canvas.x + canvas.width * 0.7, canvas.y + canvas.height * 0.4);
+  await page.waitForTimeout(300);
+
+  const readout = await page.locator('.measure__readout').textContent();
+  expect(Boolean(readout), 'measure: no reading shown after two taps');
+  expect(/\d+\.\d{2}/.test(readout ?? ''), `measure: reading looks wrong (${readout})`);
+  await shot(page, 'tool-measure');
+  await page.close();
+}
+
+// --- Properties -------------------------------------------------------------
+
+{
+  const page = await open('properties', PHONE);
+  const canvas = await page.locator('.canvas').boundingBox();
+
+  // Select the building by tapping its middle, then rename it.
+  await page.mouse.click(canvas.x + canvas.width * 0.45, canvas.y + canvas.height * 0.5);
+  await page.waitForTimeout(400);
+
+  if (await page.locator('.contextbar').isVisible()) {
+    await page.getByRole('button', { name: 'Properties' }).click();
+    await page.waitForTimeout(500);
+    expect(
+      (await page.locator('.panel').count()) > 0,
+      'properties: sheet did not open for a selection',
+    );
+    await shot(page, 'properties');
+  } else {
+    problems.push('properties: tapping an object did not select it');
+  }
+  await page.close();
+}
+
+// --- Import -----------------------------------------------------------------
+
+{
+  const page = await open('import', PHONE);
+  await page.getByRole('button', { name: 'Data' }).click();
+  await page.waitForTimeout(400);
+  await page.getByRole('tab', { name: 'Paste table' }).click();
+  await page.waitForTimeout(300);
+
+  // Headerless, so the extractor must ask about the coordinate order.
+  await page.locator('.importer__input').fill(
+    ['A,534800,182900', 'B,534840,182900', 'C,534840,182930', 'D,534800,182930'].join('\n'),
+  );
+  await page.waitForTimeout(400);
+
+  const importText = (await page.textContent('body')) ?? '';
+  expect(/4 points read/.test(importText), 'import: point count not reported');
+  expect(
+    /Does that look right/.test(importText),
+    'import: headerless coordinate order was assumed without asking',
+  );
+  await shot(page, 'import');
+
+  // The confirm button must be reachable, not hidden under a pinned footer.
+  const confirm = page.getByRole('button', { name: /Confirm and use/ });
+  expect(await confirm.isVisible(), 'import: confirm button is not visible');
+  await confirm.click();
+  await page.waitForTimeout(700);
+
+  const afterText = (await page.textContent('body')) ?? '';
+  expect(/m²/.test(afterText), 'import: no area after importing a closed boundary');
+  await shot(page, 'import-applied');
+  await page.close();
+}
+
+// --- Persistence ------------------------------------------------------------
+
+{
+  const page = await open('persistence', PHONE);
+  await page.getByRole('tab', { name: 'Draw' }).click();
+  await page.waitForTimeout(300);
+
+  const canvas = await page.locator('.canvas').boundingBox();
+  await page.mouse.click(canvas.x + canvas.width * 0.25, canvas.y + canvas.height * 0.8);
+  await page.waitForTimeout(900); // beyond the save debounce
+
+  const count = await page.locator('.element--point').count();
+  await page.reload({ waitUntil: 'networkidle' });
+  await page.waitForTimeout(700);
+
+  expect(
+    (await page.locator('.element--point').count()) === count,
+    'persistence: work did not survive a reload',
+  );
   await page.close();
 }
 

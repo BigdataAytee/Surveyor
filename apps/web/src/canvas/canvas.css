@@ -267,3 +267,54 @@
   border-top: none;
   transition: width var(--duration-micro) linear;
 }
+
+/* --- Tools -------------------------------------------------------------- */
+
+/*
+ * Draw and measure need precise taps, so the cursor stops pretending the
+ * surface is draggable while they are active.
+ */
+.canvas:has(.canvas__hint) {
+  cursor: crosshair;
+}
+
+.canvas__hint {
+  position: absolute;
+  top: var(--space-3);
+  left: 50%;
+  transform: translateX(-50%);
+  padding: var(--space-2) var(--space-3);
+  border-radius: var(--radius-full);
+  background: var(--surface-raised);
+  border: 1px solid var(--border);
+  box-shadow: var(--shadow-md);
+  font-size: var(--text-caption);
+  color: var(--ink-secondary);
+  white-space: nowrap;
+  pointer-events: none;
+  animation: enter-fade var(--duration-normal) var(--ease-standard) both;
+}
+
+.measure__line {
+  stroke: var(--accent);
+  stroke-width: 1.5;
+  stroke-dasharray: 5 3;
+  vector-effect: non-scaling-stroke;
+}
+
+.measure__node {
+  fill: var(--paper);
+  stroke: var(--accent);
+  stroke-width: 2;
+}
+
+.measure__readout {
+  font-family: var(--font-technical);
+  font-size: 11px;
+  font-weight: 600;
+  fill: var(--accent);
+  paint-order: stroke;
+  stroke: var(--paper);
+  stroke-width: 4;
+  stroke-linejoin: round;
+}

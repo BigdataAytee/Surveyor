@@ -344,3 +344,57 @@
   border-radius: var(--radius-sm);
   box-shadow: var(--shadow-md);
 }
+
+/* --- Import ------------------------------------------------------------- */
+
+.importer__file {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 52px;
+  border: 1px dashed var(--border-strong);
+  border-radius: var(--radius-md);
+  color: var(--accent);
+  font-size: var(--text-caption);
+  font-weight: var(--weight-medium);
+  cursor: pointer;
+  transition: border-color var(--duration-micro) var(--ease-standard);
+}
+
+.importer__file:hover {
+  border-color: var(--accent);
+  background: var(--accent-soft);
+}
+
+.importer__file input {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  opacity: 0;
+}
+
+.detected {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  list-style: none;
+  padding: 0;
+  width: 100%;
+}
+
+.detected__item {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  font-size: var(--text-caption);
+}
+
+.detected__role {
+  min-width: 6.5rem;
+  color: var(--ink-secondary);
+}
+
+.detected__source {
+  font-size: var(--text-micro);
+  color: var(--ink-tertiary);
+}

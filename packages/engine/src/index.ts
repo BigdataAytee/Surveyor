@@ -11,6 +11,7 @@ export * from './cogo.js';
 export * from './validation.js';
 export * from './drawing.js';
 export * from './input.js';
+export * from './document.js';
 export * from './labeling/templates.js';
 export * from './labeling/semantic.js';
 export * from './labeling/placement.js';

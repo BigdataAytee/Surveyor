@@ -6,10 +6,16 @@
  * carries plain-language guidance from the Knowledge Base.
  */
 
-import { useState } from 'react';
+import { useMemo, useState } from 'react';
 
 import type { SurveyPoint } from '@surveyor/contracts';
-import { parsePointTable, ringFromPointOrder, UNIT_ABBREVIATION } from '@surveyor/engine';
+import {
+  extractPoints,
+  pointsFromExtraction,
+  ringFromPointOrder,
+  UNIT_ABBREVIATION,
+  type TableAnalysis,
+} from '@surveyor/engine';
 
 import {
   Button,
@@ -26,6 +32,9 @@ import { EXPLANATIONS } from '../ai/assistant.js';
 import './panels.css';
 
 type Mode = 'list' | 'paste';
+
+/** Matches the Validation Engine's threshold, so the two agree on "unsure". */
+const LOW_CONFIDENCE = 0.85;
 
 export function DataSheet({ onClose }: { readonly onClose: () => void }) {
   const { state, dispatch } = useProject();
@@ -91,11 +100,17 @@ export function DataSheet({ onClose }: { readonly onClose: () => void }) {
         </>
       )}
 
-      <div className="panel__footer">
-        <Button full variant="primary" onClick={onClose}>
-          Done
-        </Button>
-      </div>
+      {/*
+        Import has its own primary action, and a pinned "Done" would sit on
+        top of it — the confirm button was hidden behind this bar.
+      */}
+      {mode === 'list' ? (
+        <div className="panel__footer">
+          <Button full variant="primary" onClick={onClose}>
+            Done
+          </Button>
+        </div>
+      ) : null}
     </div>
   );
 }
@@ -197,24 +212,50 @@ function PointEditor({
 // Paste importer
 // ---------------------------------------------------------------------------
 
+/**
+ * Import, driven by the Document AI extractor.
+ *
+ * The user pastes or uploads whatever they have; the engine works out the
+ * shape and says how sure it is. Anything it is not sure about — chiefly the
+ * easting/northing order when there are no headings — is shown as a decision
+ * for the user rather than a silent assumption (Part C row 6).
+ */
 function PasteImporter({ onDone }: { readonly onDone: () => void }) {
   const { state, dispatch } = useProject();
   const [text, setText] = useState('');
-  const result = text.trim().length > 0 ? parsePointTable(text) : null;
+  const [swapped, setSwapped] = useState(false);
+
+  const result = useMemo(
+    () =>
+      text.trim().length > 0
+        ? extractPoints(text, { swapEastingNorthing: swapped })
+        : null,
+    [text, swapped],
+  );
+
+  const points = result ? pointsFromExtraction(result) : [];
+  const uncertain = points.filter(
+    (p) => (p.provenance.confidence ?? 1) < LOW_CONFIDENCE,
+  ).length;
+
+  async function readFile(file: File): Promise<void> {
+    setText(await file.text());
+    setSwapped(false);
+  }
 
   function apply(): void {
-    if (!result || result.parsed.length < 3) return;
+    if (points.length < 3) return;
     dispatch({
       type: 'set-model',
       model: {
         ...state.model,
-        points: result.parsed,
-        boundary: [
-          ringFromPointOrder(
-            'ring_1',
-            result.parsed.map((p) => p.id),
-          ),
-        ],
+        // Confirmed by pressing the button, so the extraction confidence has
+        // served its purpose and the points become user-confirmed data.
+        points: points.map((point) => ({
+          ...point,
+          provenance: { source: 'user-confirmed' as const },
+        })),
+        boundary: [ringFromPointOrder('ring_1', points.map((p) => p.id))],
       },
     });
     onDone();
@@ -222,33 +263,68 @@ function PasteImporter({ onDone }: { readonly onDone: () => void }) {
 
   return (
     <div className="importer">
-      <Field
-        label="Paste your points"
-        hint="One per line: name, easting, northing"
-      >
+      <label className="importer__file">
+        <input
+          type="file"
+          accept=".csv,.txt,.tsv,text/plain,text/csv"
+          onChange={(event) => {
+            const file = event.target.files?.[0];
+            if (file) void readFile(file);
+          }}
+        />
+        <span>Choose a file</span>
+      </label>
+
+      <Field label="…or paste your points" hint="Any common layout — we work out the columns">
         <textarea
           className="importer__input numeric"
-          rows={7}
+          rows={6}
           value={text}
-          placeholder={'PT1, 534800.00, 182900.00\nPT2, 534832.40, 182903.10'}
-          onChange={(event) => setText(event.target.value)}
+          placeholder={'Point, Easting, Northing\nPT1, 534800.00, 182900.00'}
+          onChange={(event) => {
+            setText(event.target.value);
+            setSwapped(false);
+          }}
         />
       </Field>
 
       {result ? (
         <FadeIn>
           <div className="importer__result">
-            <StatusBadge tone={result.problems.length > 0 ? 'review' : 'ready'}>
-              {result.parsed.length} point{result.parsed.length === 1 ? '' : 's'} read
+            <StatusBadge
+              tone={
+                result.problems.length > 0 || uncertain > 0 ? 'review' : 'ready'
+              }
+            >
+              {points.length} point{points.length === 1 ? '' : 's'} read
             </StatusBadge>
 
-            {/* Bad rows are shown with their line and text, never dropped. */}
+            <DetectedColumns analysis={result.analysis} />
+
+            {/*
+              The one inference the engine cannot make honestly. Rather than
+              picking the commoner convention, it asks — getting this wrong
+              mirrors the entire site.
+            */}
+            {uncertain > 0 ? (
+              <Card tone="sunken">
+                <p className="panel__body">
+                  There were no column headings, so I read the columns as
+                  {swapped ? ' northing then easting' : ' easting then northing'}.
+                  Does that look right?
+                </p>
+                <Button size="sm" onClick={() => setSwapped((s) => !s)}>
+                  No — swap them
+                </Button>
+              </Card>
+            ) : null}
+
             {result.problems.length > 0 ? (
               <ul className="importer__problems">
                 {result.problems.map((problem) => (
                   <li key={`${problem.line}-${problem.text}`}>
                     <span className="numeric">Line {problem.line}</span> — {problem.message}
-                    <code>{problem.text}</code>
+                    {problem.text ? <code>{problem.text}</code> : null}
                   </li>
                 ))}
               </ul>
@@ -257,16 +333,43 @@ function PasteImporter({ onDone }: { readonly onDone: () => void }) {
         </FadeIn>
       ) : null}
 
-      <Button
-        full
-        variant="primary"
-        disabled={!result || result.parsed.length < 3}
-        onClick={apply}
-      >
-        {result && result.parsed.length < 3
+      <Button full variant="primary" disabled={points.length < 3} onClick={apply}>
+        {result && points.length < 3
           ? 'Need at least 3 points'
-          : 'Replace survey points'}
+          : uncertain > 0
+            ? 'Confirm and use these points'
+            : 'Use these points'}
       </Button>
     </div>
   );
 }
+
+/** What the extractor decided each column holds, and how sure it was. */
+function DetectedColumns({ analysis }: { readonly analysis: TableAnalysis }) {
+  const named = analysis.columns.filter((column) => column.role !== 'unknown');
+  if (named.length === 0) return null;
+
+  return (
+    <ul className="detected">
+      {named.map((column) => (
+        <li key={column.index} className="detected__item">
+          <span className="detected__role">{COLUMN_LABEL[column.role]}</span>
+          <span className="detected__source numeric">
+            {column.header ?? `column ${column.index + 1}`}
+          </span>
+          {column.confidence < LOW_CONFIDENCE ? (
+            <StatusBadge tone="review">unsure</StatusBadge>
+          ) : null}
+        </li>
+      ))}
+    </ul>
+  );
+}
+
+const COLUMN_LABEL: Record<string, string> = {
+  id: 'Name',
+  easting: 'Easting',
+  northing: 'Northing',
+  elevation: 'Elevation',
+  description: 'Description',
+};
