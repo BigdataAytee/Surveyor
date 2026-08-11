@@ -415,6 +415,35 @@ export function Workspace() {
             { value: 'dimension', label: 'Dimension' },
           ]}
         />
+
+        {/*
+          Add and Edit are panels rather than modes, so they are buttons rather
+          than segments — mixing them into the mode picker would say that
+          "Edit" is a state the canvas can be in, which it is not.
+
+          They belong here because until now they had no button at all: Add was
+          reachable only by pressing `A`, and Edit only by selecting something
+          first or pressing `E`. On a phone, which has neither key, the whole
+          palette of drawing tools was effectively invisible.
+        */}
+        <div className="toolbar__actions">
+          <Button size="sm" onClick={() => openPanel('add')} title="Add to the drawing (A)">
+            + Add
+          </Button>
+          {/*
+            "Modify" rather than "Edit", because the contextual bar over the
+            drawing already says Edit about the current selection. Two buttons
+            reading the same word, on screen together, doing the same thing, is
+            a thing to guess at. Modify is also what a CAD user is looking for.
+          */}
+          <Button
+            size="sm"
+            onClick={() => openPanel('tools')}
+            title="Move, rotate, scale, mirror, offset, array, chamfer (E)"
+          >
+            Modify
+          </Button>
+        </div>
       </div>
 
       <nav className="tabbar" aria-label="Main">
@@ -544,8 +573,8 @@ export function Workspace() {
       <BottomSheet
         open={panel === 'tools'}
         onClose={() => setPanel(null)}
-        title="Edit"
-        subtitle="Move, rotate, scale, mirror and offset — by exact amounts"
+        title="Modify"
+        subtitle="Move, rotate, scale, mirror, offset, array and chamfer — by exact amounts"
       >
         <ToolsSheet onClose={() => setPanel(null)} />
       </BottomSheet>

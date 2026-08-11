@@ -22,6 +22,7 @@ import {
   mirror,
   mirrorRing,
   polarDisplacement,
+  arrayDisplacements,
   rectangularArray,
   rotate,
   rotatePoint,
@@ -708,4 +709,73 @@ test('a drawing is told apart from a table before either is read', () => {
   assert.equal(looksLikeDxf('0\t534800.00\t182900.00'), false);
   // "SECTION" as a column heading, not as a DXF opening pair.
   assert.equal(looksLikeDxf('SECTION, EASTING, NORTHING'), false);
+});
+
+test('an array puts the original first and never repeats a position', () => {
+  const displacements = arrayDisplacements({
+    rows: 2,
+    columns: 3,
+    rowSpacing: 10,
+    columnSpacing: 5,
+  });
+
+  assert.equal(displacements.length, 6);
+  // The first is the original's own place, which is what lets a caller skip it
+  // rather than stacking a copy on top of the thing being copied.
+  assert.ok(Math.abs(displacements[0]!.de) < 1e-9);
+  assert.ok(Math.abs(displacements[0]!.dn) < 1e-9);
+
+  const seen = new Set(displacements.map((d) => `${d.de.toFixed(6)},${d.dn.toFixed(6)}`));
+  assert.equal(seen.size, 6, 'two copies landed in the same place');
+
+  // Default bearing is due east, so columns run east and rows run north.
+  assert.ok(Math.abs(displacements[1]!.de - 5) < 1e-9);
+  assert.ok(Math.abs(displacements[1]!.dn) < 1e-9);
+  assert.ok(Math.abs(displacements[3]!.de) < 1e-9);
+  assert.ok(Math.abs(displacements[3]!.dn - 10) < 1e-9);
+});
+
+test('the array grid and the vertex array agree about where copies go', () => {
+  // Two callers, one convention: the panel arrays whole site features by
+  // displacement, the geometry helper arrays bare vertices. They must not
+  // drift, or a terrace drawn one way would not sit where the other put it.
+  const square: readonly Coordinates[] = [
+    { easting: 0, northing: 0 },
+    { easting: 4, northing: 0 },
+    { easting: 4, northing: 4 },
+  ];
+  const options = { rows: 2, columns: 2, rowSpacing: 7, columnSpacing: 9, bearingDegrees: 35 };
+
+  const byVertices = rectangularArray(square, options);
+  const byDisplacement = arrayDisplacements(options);
+  assert.equal(byVertices.length, byDisplacement.length);
+
+  byDisplacement.forEach((by, index) => {
+    const expected = square.map((vertex) => ({
+      easting: vertex.easting + by.de,
+      northing: vertex.northing + by.dn,
+    }));
+    byVertices[index]!.forEach((vertex, at) => {
+      nearPoint(vertex, expected[at]!.easting, expected[at]!.northing);
+    });
+  });
+});
+
+test('a chamfer that would run past the end of a leg is refused', () => {
+  const before = { easting: 0, northing: 10 };
+  const corner = { easting: 0, northing: 0 };
+  const after = { easting: 6, northing: 0 };
+
+  // Comfortably inside both legs.
+  const fits = chamferCorner(before, corner, after, 2);
+  assert.ok(fits);
+  nearPoint(fits![0]!, 0, 2);
+  nearPoint(fits![1]!, 2, 0);
+
+  // The shorter leg is 6 m, so 6 and beyond would fold the boundary through
+  // itself. Refused rather than clamped: a splay that silently became a
+  // different size is a boundary the surveyor did not draw.
+  assert.equal(chamferCorner(before, corner, after, 6), null);
+  assert.equal(chamferCorner(before, corner, after, 9), null);
+  assert.equal(chamferCorner(before, corner, after, 0), null);
 });

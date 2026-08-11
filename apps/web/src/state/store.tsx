@@ -32,6 +32,8 @@ import type {
 } from '@surveyor/contracts';
 import { confirm } from '@surveyor/contracts';
 import {
+  arrayDisplacements,
+  chamferCorner,
   distanceBetween,
   inverse,
   mirror,
@@ -42,6 +44,7 @@ import {
   scale,
   translate,
   type PipelineResult,
+  type RectangularArrayOptions,
   type Vector,
 } from '@surveyor/engine';
 
@@ -119,6 +122,23 @@ export type Action =
   | { type: 'delete-selection' }
   /** Copy everything selected by a displacement, leaving the original. */
   | { type: 'duplicate-selection'; by: Vector }
+  /**
+   * Repeat the selection on a grid — a terrace of houses, a run of bays, a
+   * line of parking spaces.
+   *
+   * The engine decides where the copies land, so this and the geometry-level
+   * `rectangularArray` can never disagree about it.
+   */
+  | { type: 'array-selection'; options: RectangularArrayOptions }
+  /**
+   * Splay a boundary corner off, replacing it with two points set back along
+   * each of its legs.
+   *
+   * The corner point is removed rather than kept, because a chamfered corner
+   * genuinely no longer exists — leaving it in the model would put a survey
+   * point in the middle of a splay where the boundary does not go.
+   */
+  | { type: 'chamfer-corner'; pointId: string; setback: number }
   | { type: 'highlight'; id: string | null }
   | { type: 'add-point'; point: SurveyPoint }
   | { type: 'add-boundary-point'; at: Coordinates }
@@ -490,6 +510,74 @@ export function reducer(state: ProjectState, action: Action): ProjectState {
           siteFeatures: [...state.model.siteFeatures, ...copies],
         }),
         copies.map((feature) => feature.id),
+      );
+    }
+
+    case 'array-selection': {
+      if (state.selectedIds.length === 0) return state;
+
+      // The first displacement is the original's own place, so it is skipped:
+      // copying something onto itself makes a duplicate nobody can see and
+      // nobody asked for.
+      const copies = arrayDisplacements(action.options)
+        .filter((by) => by.de !== 0 || by.dn !== 0)
+        .flatMap((by) => copyOf(state.model, state.selectedIds, by));
+
+      if (copies.length === 0) return state;
+
+      return selectionOf(
+        commit(state, {
+          ...state.model,
+          siteFeatures: [...state.model.siteFeatures, ...copies],
+        }),
+        copies.map((feature) => feature.id),
+      );
+    }
+
+    case 'chamfer-corner': {
+      const order = ringOrder(state.model, state.model.points);
+      const at = order.indexOf(action.pointId);
+      // Only a corner of the boundary has two legs to splay between. A loose
+      // detail point has none, and there is nothing to chamfer.
+      if (at === -1 || order.length < 3) return state;
+
+      const byId = new Map(state.model.points.map((point) => [point.id, point]));
+      const corner = byId.get(action.pointId);
+      const before = byId.get(order[(at - 1 + order.length) % order.length]!);
+      const after = byId.get(order[(at + 1) % order.length]!);
+      if (!corner || !before || !after) return state;
+
+      const splay = chamferCorner(
+        before.coordinates,
+        corner.coordinates,
+        after.coordinates,
+        action.setback,
+      );
+      // Null when the setback runs past the end of a leg, which would fold the
+      // boundary through itself. Refused rather than clamped: a chamfer that
+      // silently became a different size is a boundary the surveyor did not
+      // draw.
+      if (!splay) return state;
+
+      const [onBefore, onAfter] = splay;
+      const stamp = Date.now().toString(36);
+      const first = { id: `${action.pointId}a_${stamp}`, coordinates: onBefore, provenance: { source: 'calculated' as const } };
+      const second = { id: `${action.pointId}b_${stamp}`, coordinates: onAfter, provenance: { source: 'calculated' as const } };
+
+      const points = [
+        ...state.model.points.filter((point) => point.id !== action.pointId),
+        first,
+        second,
+      ];
+      const renewed = order.flatMap((id) => (id === action.pointId ? [first.id, second.id] : [id]));
+
+      return selectionOf(
+        commit(state, {
+          ...state.model,
+          points,
+          boundary: [ringFromPointOrder('ring_1', renewed)],
+        }),
+        [first.id, second.id],
       );
     }
 

@@ -75,11 +75,25 @@ reports real progress rather than animating a timer.
   perpendicular or the grid, and shows which. A snapped corner shares the other
   object's coordinate exactly — not to within a pixel — which is the difference
   between a drawing that computes correctly and one that only looks right.
-- **Editing** works on a selection: tap, shift-click or drag a box, then Edit.
+- **Add** and **Modify** sit in the tool row, beside the mode picker. They are
+  panels rather than modes, so they are buttons — and they are there because
+  until recently they had no button at all: Add answered only to the `A` key
+  and Modify to `E`, which on a phone meant the whole palette was invisible.
+- **Editing** works on a selection: tap, shift-click or drag a box, then Modify.
   Move, copy, rotate, scale, mirror and offset all take a typed value, because
   a surveyor moving a building 3 m north means 3.000 m and no pointer can say
   that. An offset produces a real setback line — mitred corners, exactly the
-  distance from the boundary anywhere you measure.
+  distance from the boundary anywhere you measure. **Array** repeats a
+  selection on a grid — a terrace, a run of bays — with the whole grid turnable
+  onto a bearing so it can follow a road rather than grid north. **Chamfer**
+  splays a boundary corner off between its two legs, which is what a corner at
+  a road junction usually is; a splay longer than the shorter leg is refused
+  with the reason rather than quietly clamped to something that fits.
+
+  Trim, extend, fillet, join and split exist in the engine, with tests, but
+  have no UI yet: each needs the user to pick two entities on the canvas (or,
+  for fillet, an arc inserted into the boundary ring), which is a canvas
+  interaction rather than a form.
 - **Dragging** covers the other half: when you want the fence *over there*,
   against that corner, you pick it up. Only something already selected can be
   dragged, so a stray gesture cannot move what you did not choose. The drag
@@ -103,7 +117,7 @@ reports real progress rather than animating a timer.
   canopy spread, spot heights, benchmarks and notes. Each is marked existing or
   proposed, and a level is printed from its elevation rather than typed as a
   label — so correcting the figure corrects the plan.
-- **Keyboard**: `V`/`D`/`M`/`I` pick a tool, `A` adds, `E` opens Edit, `F` toggles snapping,
+- **Keyboard**: `V`/`D`/`M`/`I` pick a tool, `A` adds, `E` opens Modify, `F` toggles snapping,
   `Delete` removes the selection, `Escape` clears it, `Ctrl+Z` / `Ctrl+Shift+Z`
   undo and redo.
 - **Import** accepts a pasted table, an uploaded `.csv`/`.txt`, or a DXF

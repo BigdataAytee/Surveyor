@@ -242,23 +242,41 @@ export function rectangularArray(
   vertices: readonly Coordinates[],
   options: RectangularArrayOptions,
 ): readonly (readonly Coordinates[])[] {
+  return arrayDisplacements(options).map((by) => translate(vertices, by));
+}
+
+/**
+ * Where each copy of an array goes, as displacements from the original.
+ *
+ * The first is always zero — the original's own place — which is what makes
+ * the result usable as a replacement for the selection rather than an addition
+ * to it.
+ *
+ * Separate from `rectangularArray` because not everything being arrayed is a
+ * bare vertex list. A site feature carries a kind, a status and a provenance
+ * alongside its geometry, and arraying it means copying the whole feature to
+ * each position rather than reducing it to points and losing what it was.
+ * Both callers share this so the two can never disagree about where the copies
+ * land.
+ */
+export function arrayDisplacements(options: RectangularArrayOptions): readonly Vector[] {
   const rows = Math.max(1, Math.floor(options.rows));
   const columns = Math.max(1, Math.floor(options.columns));
   const bearing = options.bearingDegrees ?? 90;
 
+  // Columns run along the bearing; rows run ninety degrees off it, which with
+  // the default bearing of due east puts rows to the north.
   const along = polarDisplacement(bearing, options.columnSpacing);
   const across = polarDisplacement(bearing - 90, options.rowSpacing);
 
-  const copies: (readonly Coordinates[])[] = [];
+  const displacements: Vector[] = [];
   for (let row = 0; row < rows; row += 1) {
     for (let column = 0; column < columns; column += 1) {
-      copies.push(
-        translate(vertices, {
-          de: along.de * column + across.de * row,
-          dn: along.dn * column + across.dn * row,
-        }),
-      );
+      displacements.push({
+        de: along.de * column + across.de * row,
+        dn: along.dn * column + across.dn * row,
+      });
     }
   }
-  return copies;
+  return displacements;
 }
