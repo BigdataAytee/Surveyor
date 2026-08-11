@@ -47,6 +47,13 @@ export interface ProjectSummary {
   /** Rough area in square metres, for the card. Null until a boundary closes. */
   readonly area: number | null;
   readonly versionCount: number;
+  /**
+   * Marked by the surveyor as one to keep to hand.
+   *
+   * Optional rather than defaulted to false, so a project stored by an earlier
+   * build reads back as unstarred without needing to be rewritten.
+   */
+  readonly starred?: boolean;
 }
 
 export interface StoredVersion {
@@ -123,6 +130,10 @@ export function saveProject(
     featureCount: model.siteFeatures.length,
     area: null,
     versionCount: versions.length,
+    // Carried across explicitly. The summary is rebuilt on every autosave, so
+    // anything not named here is dropped — and a star that vanished on the
+    // next keystroke would look like the app forgetting on purpose.
+    ...(existing?.summary.starred ? { starred: true } : {}),
   };
 
   return write(id, { summary, model, versions }) ? summary : null;
@@ -171,6 +182,22 @@ export function duplicateProject(id: string, now = new Date()): string | null {
     versions: [],
   });
   return ok ? copyId : null;
+}
+
+/**
+ * Star or unstar a project.
+ *
+ * Only the summary moves, never the model: which surveys someone keeps to
+ * hand is a fact about them, not about the site, and it must not touch the
+ * survey data or its version history.
+ */
+export function toggleStar(id: string): boolean {
+  const project = readProject(id);
+  if (!project) return false;
+
+  const starred = !project.summary.starred;
+  write(id, { ...project, summary: { ...project.summary, starred } });
+  return starred;
 }
 
 export function deleteProject(id: string): void {

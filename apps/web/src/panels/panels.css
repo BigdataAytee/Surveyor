@@ -575,3 +575,149 @@
   gap: var(--space-2);
   align-items: baseline;
 }
+
+/* --- Reports ------------------------------------------------------------- */
+
+/* The report is shown as the text that will be sent, not as a styled preview
+   of it: one that looked different here than it arrives is one nobody trusts
+   a second time. */
+.report {
+  padding: var(--space-3);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--surface-sunken);
+  font-family: var(--font-technical);
+  font-size: var(--text-micro);
+  line-height: 1.5;
+  color: var(--ink);
+  white-space: pre;
+  overflow-x: auto;
+  max-height: 52vh;
+}
+
+/* --- Documents ----------------------------------------------------------- */
+
+.documents {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  list-style: none;
+  padding: 0;
+}
+
+.document {
+  display: grid;
+  grid-template-columns: 48px 1fr auto;
+  align-items: center;
+  gap: var(--space-3);
+}
+
+.document__thumb {
+  width: 48px;
+  height: 48px;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--border);
+  object-fit: cover;
+  background: var(--paper);
+}
+
+.document__thumb--file {
+  display: grid;
+  place-items: center;
+  font-size: 1.2rem;
+  color: var(--ink-tertiary);
+}
+
+.document__facts {
+  min-width: 0;
+}
+
+.document__name {
+  font-weight: var(--weight-medium);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.document__actions {
+  display: flex;
+  gap: var(--space-2);
+  flex: none;
+}
+
+/* A removal confirmation spans the card rather than sitting in the action
+   column, so the name of what is going is readable. */
+.document .tools__row {
+  grid-column: 1 / -1;
+}
+
+/* --- Help ---------------------------------------------------------------- */
+
+.help {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  list-style: none;
+  padding: 0;
+}
+
+.help__item {
+  padding: var(--space-3);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--surface);
+}
+
+.help__item summary {
+  cursor: pointer;
+  min-height: 28px;
+  display: flex;
+  align-items: center;
+  font-size: var(--text-body);
+  font-weight: var(--weight-medium);
+}
+
+.help__steps {
+  margin: var(--space-2) 0 0 var(--space-4);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  font-size: var(--text-caption);
+  color: var(--ink-secondary);
+}
+
+.help__keys {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  list-style: none;
+  padding: 0;
+}
+
+.help__keys li {
+  display: grid;
+  grid-template-columns: 10rem 1fr;
+  align-items: center;
+  gap: var(--space-3);
+  min-height: 32px;
+  font-size: var(--text-caption);
+}
+
+.help__keys kbd {
+  justify-self: start;
+  padding: 2px var(--space-2);
+  border: 1px solid var(--border-strong);
+  border-bottom-width: 2px;
+  border-radius: var(--radius-sm);
+  background: var(--surface-sunken);
+  font-family: var(--font-technical);
+  font-size: var(--text-micro);
+}
+
+/* A hint under a settings toggle's label. */
+.toggle__hint {
+  display: block;
+  font-size: var(--text-micro);
+  color: var(--ink-tertiary);
+  font-weight: var(--weight-regular);
+}

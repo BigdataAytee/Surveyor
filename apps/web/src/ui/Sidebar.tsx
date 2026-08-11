@@ -7,12 +7,11 @@
  * resolves to a panel the app already has, or is marked as somewhere it cannot
  * take you yet.
  *
- * That marking is deliberate. Half of the sections a full product would carry —
- * a profile, saved items, reports, documents, settings, help, and signing out —
- * do not exist in this app, and several have nothing behind them to build on
- * (there is no account system at all, so there is nothing to log out of). An
- * item that silently does nothing when tapped is worse than one that says it is
- * not ready, because the first reads as a bug and the second reads as a plan.
+ * Every item goes somewhere. Signing out is the one exception to the panel
+ * convention: there is no account to leave, so it means leaving this *device*,
+ * which is a real thing to want on a shared site tablet and a destructive one.
+ * It gets its own target kind rather than sharing the code path that opens a
+ * sheet.
  *
  * Motion, scrim, tokens and controls are the ones the bottom sheets already
  * use, so the drawer is the same object family rather than a second design.
@@ -34,10 +33,26 @@ import './sidebar.css';
 export type SidebarTarget =
   | { readonly kind: 'panel'; readonly panel: SidebarPanel }
   | { readonly kind: 'canvas' }
-  | { readonly kind: 'unavailable' };
+  /**
+   * Leaving the device.
+   *
+   * Its own kind rather than a panel, because it is the one item here that
+   * destroys something and it must not be reachable by the same code path as
+   * opening a sheet.
+   */
+  | { readonly kind: 'signout' };
 
 /** The panels the sidebar can reach. A subset of the workspace's own union. */
-export type SidebarPanel = 'ai' | 'projects' | 'tools';
+export type SidebarPanel =
+  | 'ai'
+  | 'projects'
+  | 'tools'
+  | 'profile'
+  | 'saved'
+  | 'reports'
+  | 'documents'
+  | 'settings'
+  | 'help';
 
 export interface SidebarItem {
   readonly id: string;
@@ -45,8 +60,6 @@ export interface SidebarItem {
   /** A glyph, matching the tab bar's convention — this app ships no icon font. */
   readonly glyph: string;
   readonly target: SidebarTarget;
-  /** Shown under the label on items that lead somewhere that does not exist. */
-  readonly note?: string;
 }
 
 /**
@@ -60,16 +73,16 @@ export const SIDEBAR_PRIMARY: readonly SidebarItem[] = [
   { id: 'projects', label: 'Projects', glyph: '▤', target: { kind: 'panel', panel: 'projects' } },
   { id: 'drawings', label: 'Drawings', glyph: '◳', target: { kind: 'canvas' } },
   { id: 'tools', label: 'Tools', glyph: '⚒', target: { kind: 'panel', panel: 'tools' } },
-  { id: 'profile', label: 'Profile', glyph: '☺', target: { kind: 'unavailable' }, note: 'No accounts yet' },
+  { id: 'profile', label: 'Profile', glyph: '☺', target: { kind: 'panel', panel: 'profile' } },
 ];
 
 export const SIDEBAR_SECONDARY: readonly SidebarItem[] = [
-  { id: 'saved', label: 'Saved', glyph: '★', target: { kind: 'unavailable' }, note: 'Not built yet' },
-  { id: 'reports', label: 'Reports', glyph: '❋', target: { kind: 'unavailable' }, note: 'Not built yet' },
-  { id: 'documents', label: 'Documents', glyph: '❐', target: { kind: 'unavailable' }, note: 'Not built yet' },
-  { id: 'settings', label: 'Settings', glyph: '⚙', target: { kind: 'unavailable' }, note: 'Not built yet' },
-  { id: 'help', label: 'Help', glyph: '?', target: { kind: 'unavailable' }, note: 'Not built yet' },
-  { id: 'logout', label: 'Logout', glyph: '⇥', target: { kind: 'unavailable' }, note: 'No sign-in to leave' },
+  { id: 'saved', label: 'Saved', glyph: '★', target: { kind: 'panel', panel: 'saved' } },
+  { id: 'reports', label: 'Reports', glyph: '❋', target: { kind: 'panel', panel: 'reports' } },
+  { id: 'documents', label: 'Documents', glyph: '❐', target: { kind: 'panel', panel: 'documents' } },
+  { id: 'settings', label: 'Settings', glyph: '⚙', target: { kind: 'panel', panel: 'settings' } },
+  { id: 'help', label: 'Help', glyph: '?', target: { kind: 'panel', panel: 'help' } },
+  { id: 'logout', label: 'Logout', glyph: '⇥', target: { kind: 'signout' } },
 ];
 
 /** How far left a drag must travel before releasing it closes the drawer. */
@@ -293,28 +306,20 @@ function SidebarRow({
   readonly active: boolean;
   readonly onNavigate: (item: SidebarItem) => void;
 }) {
-  const unavailable = item.target.kind === 'unavailable';
+  const leaving = item.target.kind === 'signout';
 
   return (
     <li>
       <button
         type="button"
-        className={`drawer__item${active ? ' is-active' : ''}${unavailable ? ' is-unavailable' : ''}`}
-        // Disabled rather than silently inert: a control that looks live and
-        // does nothing is read as a fault. `aria-disabled` keeps it reachable
-        // by keyboard so the section is still announced.
-        aria-disabled={unavailable || undefined}
+        className={`drawer__item${active ? ' is-active' : ''}${leaving ? ' is-leaving' : ''}`}
         aria-current={active ? 'page' : undefined}
-        onClick={() => {
-          if (unavailable) return;
-          onNavigate(item);
-        }}
+        onClick={() => onNavigate(item)}
       >
         <span className="drawer__glyph" aria-hidden="true">
           {item.glyph}
         </span>
         <span className="drawer__label">{item.label}</span>
-        {item.note ? <span className="drawer__note">{item.note}</span> : null}
       </button>
     </li>
   );

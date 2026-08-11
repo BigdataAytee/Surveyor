@@ -146,6 +146,19 @@ reports real progress rather than animating a timer.
   surveyor runs by hand. They are computed from the same corners the area and
   the dimensions come from, so a plan checked against a deed shows the deed's
   figures rather than ones measured off the drawing.
+- **The menu** (top left) opens a drawer with the app's sections. Profile is
+  the identity that prints in the title block, stored once rather than typed
+  per plan. Saved is the projects you have starred. Reports writes the survey
+  out — summary, point schedule, traverse — from the same figures the plan is
+  drawn from, at the same precision the jurisdiction prints, so the two
+  documents cannot disagree. Documents keeps the deed, the brief and the
+  photographed field note with the project, because when a boundary is
+  questioned it is the paperwork that settles it. Settings holds the defaults
+  and shows what this browser is storing. Help is the assistant's own task
+  guides, the shortcuts and the ideas behind the app.
+- **Logout** is honest about what it can be: there is no account, so it
+  removes the app's data from this device — which is the real risk on a shared
+  site tablet. It says exactly what goes before it goes.
 - **Ask for a new project** and the assistant answers with the question that
   actually matters: what should happen to the plan you are leaving. Keeping it
   puts it in Projects; discarding deletes it. Either answer opens a blank

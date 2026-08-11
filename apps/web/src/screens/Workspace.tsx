@@ -25,6 +25,7 @@ import { STATUS_LABEL, ValidationSheet } from '../panels/ValidationSheet.js';
 import {
   BottomSheet,
   Button,
+  Card,
   EmptyState,
   ProgressStepper,
   StatusBadge,
@@ -32,7 +33,14 @@ import {
   type Step,
   type StatusTone,
 } from '../ui/primitives.js';
+import { ProfileSheet } from '../panels/ProfileSheet.js';
+import { SavedSheet } from '../panels/SavedSheet.js';
+import { ReportsSheet } from '../panels/ReportsSheet.js';
+import { DocumentsSheet } from '../panels/DocumentsSheet.js';
+import { SettingsSheet } from '../panels/SettingsSheet.js';
+import { HelpSheet } from '../panels/HelpSheet.js';
 import { Sidebar } from '../ui/Sidebar.js';
+import { clearAllData, loadPreferences } from '../state/preferences.js';
 import { FadeIn } from '../ui/motion.js';
 import { useProject } from '../state/store.js';
 import './workspace.css';
@@ -48,6 +56,12 @@ type Panel =
   | 'tools'
   | 'add'
   | 'projects'
+  | 'profile'
+  | 'saved'
+  | 'reports'
+  | 'documents'
+  | 'settings'
+  | 'help'
   | null;
 
 interface LayerState {
@@ -85,11 +99,18 @@ export function Workspace() {
     { readonly x: number; readonly y: number; readonly id: string | null } | null
   >(null);
   const [menuOpen, setMenuOpen] = useState(false);
-  const [showLabels, setShowLabels] = useState(true);
-  const [showGrid, setShowGrid] = useState(true);
-  const [theme, setTheme] = useState<'light' | 'dark'>('light');
+  const [signingOut, setSigningOut] = useState(false);
+  /*
+   * Seeded from the stored preferences rather than from constants. These were
+   * chosen afresh on every visit — the theme most visibly — which reads as the
+   * app not paying attention rather than as a default.
+   */
+  const [preferences, setPreferences] = useState(() => loadPreferences());
+  const [showLabels, setShowLabels] = useState(preferences.showLabels);
+  const [showGrid, setShowGrid] = useState(preferences.showGrid);
+  const [theme, setTheme] = useState<'light' | 'dark'>(preferences.theme);
   const [tool, setTool] = useState<CanvasTool>('select');
-  const [snapping, setSnapping] = useState(true);
+  const [snapping, setSnapping] = useState(preferences.snapping);
   /**
    * Which layers are shown, and which are held still.
    *
@@ -618,6 +639,117 @@ export function Workspace() {
         />
       </BottomSheet>
 
+      <BottomSheet
+        open={panel === 'profile'}
+        onClose={() => setPanel(null)}
+        title="Profile"
+        subtitle="Who is drawing, for the title block"
+      >
+        <ProfileSheet onClose={() => setPanel(null)} />
+      </BottomSheet>
+
+      <BottomSheet
+        open={panel === 'saved'}
+        onClose={() => setPanel(null)}
+        title="Saved"
+        subtitle="The projects you keep to hand"
+        size="tall"
+      >
+        <SavedSheet onClose={() => setPanel(null)} onOpenLibrary={() => setPanel('projects')} />
+      </BottomSheet>
+
+      <BottomSheet
+        open={panel === 'reports'}
+        onClose={() => setPanel(null)}
+        title="Reports"
+        subtitle="The survey written out, from the same figures as the plan"
+        size="full"
+      >
+        <ReportsSheet onClose={() => setPanel(null)} />
+      </BottomSheet>
+
+      <BottomSheet
+        open={panel === 'documents'}
+        onClose={() => setPanel(null)}
+        title="Documents"
+        subtitle="Deeds, briefs and field notes kept with this project"
+        size="tall"
+      >
+        <DocumentsSheet onClose={() => setPanel(null)} />
+      </BottomSheet>
+
+      <BottomSheet
+        open={panel === 'settings'}
+        onClose={() => setPanel(null)}
+        title="Settings"
+        subtitle="Defaults, and what this browser is holding"
+        size="tall"
+      >
+        <SettingsSheet
+          onClose={() => setPanel(null)}
+          onChanged={(next) => {
+            // Applied at once rather than on the next reload: a preference
+            // that takes effect later is one the user assumes did not work.
+            setPreferences(next);
+            setTheme(next.theme);
+            setSnapping(next.snapping);
+            setShowGrid(next.showGrid);
+            setShowLabels(next.showLabels);
+          }}
+        />
+      </BottomSheet>
+
+      <BottomSheet
+        open={panel === 'help'}
+        onClose={() => setPanel(null)}
+        title="Help"
+        subtitle="How to do things, and what the numbers mean"
+        size="tall"
+      >
+        <HelpSheet onClose={() => setPanel(null)} />
+      </BottomSheet>
+
+      {/*
+        Signing out of a device rather than out of an account — there is no
+        account. On a shared site tablet, leaving your surveys on it is the
+        real risk, so this is what "sign out" can honestly mean here. It is
+        destructive, so it says exactly what goes before it goes.
+      */}
+      <BottomSheet
+        open={signingOut}
+        onClose={() => setSigningOut(false)}
+        title="Log out of this device"
+      >
+        <div className="panel">
+          <Card tone="sunken">
+            <p className="panel__body">
+              This app has no account to log out of — everything is stored in this
+              browser. Logging out therefore means removing it from this device:
+              every project, its version history, its documents and your profile.
+            </p>
+          </Card>
+          <p className="panel__body">
+            Export anything you need first. This cannot be undone and there is no
+            copy anywhere else.
+          </p>
+          <div className="panel__footer panel__footer--stacked">
+            <Button
+              full
+              variant="danger"
+              onClick={() => {
+                clearAllData();
+                window.location.reload();
+              }}
+            >
+              Log out and erase this device
+            </Button>
+            <Button full variant="primary" onClick={() => setSigningOut(false)}>
+              Stay logged in
+            </Button>
+          </div>
+        </div>
+      </BottomSheet>
+
       {/*
         The navigation drawer. It reaches the panels the app already has by the
         same route everything else does — a panel name — rather than bringing
@@ -634,6 +766,7 @@ export function Workspace() {
           // The drawing is what the sheets sit on top of, so getting back to
           // it means dismissing them.
           else if (item.target.kind === 'canvas') setPanel(null);
+          else setSigningOut(true);
         }}
       />
 
@@ -957,6 +1090,13 @@ function activeSection(panel: Panel): string | null {
       return 'projects';
     case 'tools':
       return 'tools';
+    case 'profile':
+    case 'saved':
+    case 'reports':
+    case 'documents':
+    case 'settings':
+    case 'help':
+      return panel;
     default:
       // A panel with no sidebar entry — Data, Layers, Export and the rest are
       // reached from the tab bar, and marking a section they do not belong to

@@ -27,6 +27,7 @@ import {
   newProjectId,
   renameProject,
   restoreVersion,
+  toggleStar,
   versionsOf,
   type ProjectSummary,
 } from '../state/library.js';
@@ -132,6 +133,10 @@ export function ProjectsSheet({ onClose }: { readonly onClose: () => void }) {
                   duplicateProject(project.id);
                   refresh();
                 }}
+                onToggleStar={() => {
+                  toggleStar(project.id);
+                  refresh();
+                }}
                 onRename={(name) => {
                   renameProject(project.id, name);
                   refresh();
@@ -187,6 +192,7 @@ function ProjectCard({
   onCancelDelete,
   onDelete,
   onDuplicate,
+  onToggleStar,
   onRename,
   showHistory,
   onToggleHistory,
@@ -200,6 +206,7 @@ function ProjectCard({
   readonly onCancelDelete: () => void;
   readonly onDelete: () => void;
   readonly onDuplicate: () => void;
+  readonly onToggleStar: () => void;
   readonly onRename: (name: string) => void;
   readonly showHistory: boolean;
   readonly onToggleHistory: () => void;
@@ -269,6 +276,15 @@ function ProjectCard({
           </Button>
           <Button size="sm" onClick={onDuplicate}>
             Duplicate
+          </Button>
+          {/* Starred projects are what the Saved section shows. Filled star
+              for on, hollow for off, so the state reads without the label. */}
+          <Button
+            size="sm"
+            aria-pressed={project.starred === true}
+            onClick={onToggleStar}
+          >
+            {project.starred ? '★ Saved' : '☆ Save'}
           </Button>
           {project.versionCount > 0 ? (
             <Button size="sm" onClick={onToggleHistory}>
