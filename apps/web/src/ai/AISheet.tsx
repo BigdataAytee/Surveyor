@@ -126,10 +126,18 @@ export function AISheet({ onOpenPanel, onSelectTool }: AISheetProps) {
     // should not appear for every tiny response. With a model planner the wait
     // is real; with rules it is a beat so the reply does not appear mid-keypress.
     setThinking(true);
-    void planner.reply(trimmed, ctx).then((message) => {
-      setThinking(false);
-      push(message);
-    });
+    // The conversation so far, so a follow-up like "what about the garage?"
+    // or a bare "yes" after a clarifying question can be understood at all.
+    const history = messages.map((message) => ({
+      role: message.role,
+      text: message.text,
+    }));
+    void planner.reply(trimmed, ctx, [...history, { role: 'user' as const, text: trimmed }]).then(
+      (message) => {
+        setThinking(false);
+        push(message);
+      },
+    );
   }
 
   /**

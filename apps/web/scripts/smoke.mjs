@@ -18,6 +18,14 @@ import { chromium } from 'playwright';
 const BASE = process.env.SMOKE_URL ?? 'http://127.0.0.1:4173/';
 const SHOTS = process.env.SMOKE_SHOTS ?? null;
 
+/*
+ * The classifier block needs a build with `VITE_ASSISTANT_ENDPOINT` set, which
+ * every other block would then also route through. So the two runs are
+ * exclusive: the default pass covers the shipped build, and `--classifier`
+ * covers the model path against a stub.
+ */
+const CLASSIFIER_ONLY = process.argv.includes('--classifier');
+
 const problems = [];
 const browser = await chromium.launch({
   ...(process.env.CHROMIUM_PATH ? { executablePath: process.env.CHROMIUM_PATH } : {}),
@@ -67,6 +75,7 @@ function expect(condition, message) {
   if (!condition) problems.push(message);
 }
 
+if (!CLASSIFIER_ONLY) {
 // --- Layout holds at every breakpoint ---------------------------------------
 
 for (const [name, viewport] of [
@@ -440,6 +449,101 @@ for (const [name, viewport] of [
   expect(/m²/.test(sizeAnswer), `guidance: no size in "${sizeAnswer.slice(0, 80)}"`);
   expect(/perimeter/i.test(sizeAnswer), 'guidance: asked in metres, answered without any lengths');
   await shot(page, 'guidance');
+  await page.close();
+}
+}
+
+// --- The classifier, end to end ---------------------------------------------
+
+/*
+ * The endpoint is inlined at build time, so a build with none configured can
+ * never exercise the model path. This block runs against a build made with
+ * `VITE_ASSISTANT_ENDPOINT` pointing at a stub, which the harness serves:
+ *
+ *   VITE_ASSISTANT_ENDPOINT=/__classify npm run build
+ *   npm run smoke -- --classifier
+ *
+ * What it proves is the half that is ours — the request carries the
+ * conversation, a classification is validated before it is believed,
+ * confidence decides between answering and asking, and the figure in the reply
+ * comes from the engine rather than from the reply that suggested it.
+ */
+if (CLASSIFIER_ONLY) {
+  const page = await open('classifier', PHONE);
+  const seen = [];
+
+  await page.route('**/__classify', async (route) => {
+    const body = JSON.parse(route.request().postData() ?? '{}');
+    seen.push(body);
+
+    const unsure = /which|either|something/i.test(body.question);
+    await route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      body: JSON.stringify(
+        unsure
+          ? {
+              understanding: 'They could mean the parcel or the house.',
+              scope: 'ambiguous',
+              capability: 'none',
+              argument: '',
+              confidence: 'low',
+              message: '',
+              clarification_question: 'Do you mean the parcel, or the house?',
+              clarification_options: [
+                { label: 'The parcel', capability: 'parcel-size', argument: '' },
+                { label: 'The house', capability: 'site-features', argument: '' },
+              ],
+              actions: [],
+            }
+          : {
+              understanding: 'They want to know how big the parcel is.',
+              scope: 'in-scope',
+              capability: 'parcel-size',
+              argument: '',
+              confidence: 'high',
+              // Deliberately wrong. The engine writes the answer; if this
+              // string reaches the screen, the guarantee has been broken.
+              message: 'The land is about 5 square metres.',
+              clarification_question: '',
+              clarification_options: [],
+              actions: [],
+            },
+      ),
+    });
+  });
+
+  await page.getByRole('button', { name: 'Assistant' }).click();
+  await page.waitForTimeout(400);
+  const input = page.getByLabel('Ask the assistant, or paste survey data').locator('visible=true').first();
+  const send = page.getByRole('button', { name: 'Send' }).locator('visible=true').first();
+
+  await input.fill('how many meters is the size of this land');
+  await send.click();
+  await page.waitForTimeout(1200);
+
+  const answered = await page.locator('.ai__message--assistant').locator('visible=true').last().innerText();
+  expect(seen.length === 1, 'classifier: the endpoint was not called');
+  expect(Array.isArray(seen[0]?.history), 'classifier: the conversation was not sent');
+  expect(/m²/.test(answered), `classifier: no figure from the engine — "${answered.slice(0, 80)}"`);
+  expect(
+    !/5 square metres/.test(answered),
+    'classifier: a figure written by the model reached the reply',
+  );
+  await shot(page, 'classifier-answer');
+
+  await input.fill('how big is it, and which one do you mean');
+  await send.click();
+  await page.waitForTimeout(1200);
+
+  const asked = await page.locator('.ai__message--assistant').locator('visible=true').last().innerText();
+  expect(/Do you mean the parcel/.test(asked), 'classifier: an unsure reading did not ask');
+  expect(!/m²/.test(asked), 'classifier: a question should not also answer itself');
+  expect(
+    await page.getByRole('button', { name: 'The parcel' }).locator('visible=true').first().isVisible(),
+    'classifier: the readings were not offered as buttons',
+  );
+  await shot(page, 'classifier-clarify');
   await page.close();
 }
 

@@ -204,7 +204,7 @@ export function openingMessage(ctx: AssistantContext): AssistantMessage {
  * Every number here comes off the pipeline. The assistant is reading them out,
  * not working them out.
  */
-function describeParcel(ctx: AssistantContext): AssistantMessage {
+export function describeParcel(ctx: AssistantContext): AssistantMessage {
   const ring = ctx.pipeline.ok ? ctx.pipeline.rings[0] : undefined;
 
   if (!ring) {
@@ -249,6 +249,154 @@ function listOf(items: readonly string[]): string {
   return `${items.slice(0, -1).join(', ')} and ${items[items.length - 1]}`;
 }
 
+/**
+ * The subject-matter answers, one per capability that carries survey values.
+ *
+ * Named and exported rather than inlined into the rule table, because they are
+ * no longer the rule table's property: the model classifier routes to exactly
+ * these, so a question understood by a model and the same question matched by a
+ * keyword produce the same figures from the same source. There is one answer to
+ * "how big is it", not one per planner.
+ */
+export function closureMessage(ctx: AssistantContext): AssistantMessage {
+  const closure = ctx.pipeline.ok ? ctx.pipeline.validation.closure[0] : undefined;
+  return {
+    id: nextId('msg'),
+    role: 'assistant',
+    text: closure
+      ? closure.misclosure < 1e-9
+        ? 'Your boundary closes exactly — the corners are defined by coordinates, so there is no traverse error to report.'
+        : `Your boundary closes to ${closure.misclosure.toFixed(3)} m, a precision of about 1:${Math.round(closure.precisionRatio).toLocaleString()}.`
+      : 'I don’t have a boundary to check yet.',
+    actions: [
+      { id: nextId('act'), label: 'What does that mean?', intent: { kind: 'explain', topic: 'closure' } },
+    ],
+  };
+}
+
+export function crsMessage(ctx: AssistantContext): AssistantMessage {
+  return {
+    id: nextId('msg'),
+    role: 'assistant',
+    text: `This survey is on ${ctx.model.crs.name} (${ctx.model.crs.datum}), in ${ctx.model.crs.units}s.`,
+    actions: [
+      { id: nextId('act'), label: 'Why does it matter?', intent: { kind: 'explain', topic: 'crs' } },
+    ],
+  };
+}
+
+export function exportMessage(): AssistantMessage {
+  return {
+    id: nextId('msg'),
+    role: 'assistant',
+    text: 'I can produce a PDF, DXF or SVG. Everything on the sheet has to be confirmed first.',
+    actions: [
+      { id: nextId('act'), label: 'Open export', intent: { kind: 'open', panel: 'export' }, tone: 'primary' },
+    ],
+  };
+}
+
+export function provenanceMessage(): AssistantMessage {
+  return { id: nextId('msg'), role: 'assistant', text: EXPLANATIONS.provenance };
+}
+
+export function pointsMessage(ctx: AssistantContext): AssistantMessage {
+  const count = ctx.model.points.length;
+  return {
+    id: nextId('msg'),
+    role: 'assistant',
+    text:
+      count === 0
+        ? 'There are no survey points yet. Paste a table in, photograph a note, or add them by hand in Data.'
+        : `You have ${count} survey point${count === 1 ? '' : 's'}: ${listOf(ctx.model.points.map((p) => p.id))}. You can edit them in Data.`,
+    actions: [
+      { id: nextId('act'), label: 'Open survey data', intent: { kind: 'open', panel: 'data' }, tone: 'primary' },
+    ],
+  };
+}
+
+export function featureMessage(ctx: AssistantContext): AssistantMessage {
+  const features = ctx.model.siteFeatures;
+  const first = features[0];
+
+  if (!first) {
+    return {
+      id: nextId('msg'),
+      role: 'assistant',
+      text: 'There is nothing on the site but the boundary yet — no buildings, no roads. Shall I propose a building?',
+      actions: [
+        {
+          id: nextId('act'),
+          label: 'Propose a building',
+          intent: { kind: 'suggest-building', label: 'Building' },
+          tone: 'primary',
+        },
+      ],
+    };
+  }
+
+  const described = features.map(
+    (feature) => `${String(feature.attributes.name ?? feature.type)} (${feature.type})`,
+  );
+  return {
+    id: nextId('msg'),
+    role: 'assistant',
+    text: `There ${features.length === 1 ? 'is' : 'are'} ${features.length} feature${features.length === 1 ? '' : 's'} on the site: ${listOf(described)}. I've highlighted the first on the drawing.`,
+    references: [first.id],
+  };
+}
+
+/**
+ * The sheet the plan will print on.
+ *
+ * The composer picks the sheet, scale and orientation together, so this reads
+ * its decision back rather than recomputing one — the number quoted here is the
+ * number that will be printed.
+ */
+export function scaleMessage(ctx: AssistantContext): AssistantMessage {
+  const plan = ctx.pipeline.ok ? ctx.pipeline.plan : undefined;
+
+  return {
+    id: nextId('msg'),
+    role: 'assistant',
+    text: plan
+      ? `The plan is laid out at 1:${plan.transform.scaleDenominator} on ${plan.sheet.id} ${plan.sheet.orientation}. That is the largest scale your site still fits a standard sheet at.`
+      : 'I can’t work out a scale until there is a boundary to fit on the sheet.',
+    actions: [
+      { id: nextId('act'), label: 'What does the scale mean?', intent: { kind: 'explain', topic: 'scale' } },
+    ],
+  };
+}
+
+export function validationMessage(ctx: AssistantContext): AssistantMessage {
+  if (!ctx.pipeline.ok) {
+    return {
+      id: nextId('msg'),
+      role: 'assistant',
+      text: `${ctx.pipeline.message} Nothing has been changed — the drawing is as you left it.`,
+      actions: [
+        { id: nextId('act'), label: 'Open Review', intent: { kind: 'open', panel: 'validation' }, tone: 'primary' },
+      ],
+    };
+  }
+
+  const { status, issues } = ctx.pipeline.validation;
+  const pending = ctx.suggestions.length;
+
+  return {
+    id: nextId('msg'),
+    role: 'assistant',
+    text:
+      status === 'ready' && pending === 0
+        ? 'Everything checks out — no issues, and nothing on the sheet is still a suggestion. It’s ready to export.'
+        : `${issues.length === 0 ? 'No issues were found' : `${issues.length} thing${issues.length === 1 ? '' : 's'} need${issues.length === 1 ? 's' : ''} a look`}` +
+          `${pending > 0 ? `, and ${pending} suggestion${pending === 1 ? '' : 's'} still to accept before you can export` : ''}.`,
+    actions: [
+      { id: nextId('act'), label: 'Open Review', intent: { kind: 'open', panel: 'validation' }, tone: 'primary' },
+    ],
+  };
+}
+
 interface Rule {
   readonly test: RegExp;
   /**
@@ -280,29 +428,7 @@ const RULES: readonly Rule[] = [
   {
     test: /\b(show|find|where|zoom).*\b(building|house|garage)\b/i,
     terms: ['building', 'house', 'garage', 'shed', 'outbuilding', 'structure', 'dwelling'],
-    respond: (ctx) => {
-      const building = ctx.model.siteFeatures.find((f) => f.type === 'building');
-      return building
-        ? {
-            id: nextId('msg'),
-            role: 'assistant',
-            text: `Here it is — ${String(building.attributes.name ?? 'the building')}, highlighted on the drawing.`,
-            references: [building.id],
-          }
-        : {
-            id: nextId('msg'),
-            role: 'assistant',
-            text: 'There is no building on the plan yet. Shall I propose one?',
-            actions: [
-              {
-                id: nextId('act'),
-                label: 'Propose a building',
-                intent: { kind: 'suggest-building', label: 'Building' },
-                tone: 'primary',
-              },
-            ],
-          };
-    },
+    respond: (ctx) => featureMessage(ctx),
   },
   {
     test: /\badd\b.*\b(garage|shed|outbuilding|extension|building)\b/i,
@@ -328,66 +454,27 @@ const RULES: readonly Rule[] = [
   {
     test: /\b(closure|close|misclos)/i,
     terms: ['closure', 'close', 'closes', 'closed', 'misclosure', 'misclose', 'precision', 'traverse error', 'gap'],
-    respond: (ctx) => {
-      const closure = ctx.pipeline.ok ? ctx.pipeline.validation.closure[0] : undefined;
-      return {
-        id: nextId('msg'),
-        role: 'assistant',
-        text: closure
-          ? closure.misclosure < 1e-9
-            ? 'Your boundary closes exactly — the corners are defined by coordinates, so there is no traverse error to report.'
-            : `Your boundary closes to ${closure.misclosure.toFixed(3)} m, a precision of about 1:${Math.round(closure.precisionRatio).toLocaleString()}.`
-          : 'I don’t have a boundary to check yet.',
-        actions: [
-          { id: nextId('act'), label: 'What does that mean?', intent: { kind: 'explain', topic: 'closure' } },
-        ],
-      };
-    },
+    respond: (ctx) => closureMessage(ctx),
   },
   {
     test: /\b(coordinate system|crs|datum|projection)\b/i,
     terms: ['coordinate system', 'crs', 'datum', 'projection', 'epsg', 'grid', 'osgb', 'utm', 'reference system'],
-    respond: (ctx) => ({
-      id: nextId('msg'),
-      role: 'assistant',
-      text: `This survey is on ${ctx.model.crs.name} (${ctx.model.crs.datum}), in ${ctx.model.crs.units}s.`,
-      actions: [
-        { id: nextId('act'), label: 'Why does it matter?', intent: { kind: 'explain', topic: 'crs' } },
-      ],
-    }),
+    respond: (ctx) => crsMessage(ctx),
   },
   {
     test: /\b(export|pdf|dxf|download|print)\b/i,
     terms: ['export', 'pdf', 'dxf', 'svg', 'download', 'print', 'share', 'issue', 'send'],
-    respond: () => ({
-      id: nextId('msg'),
-      role: 'assistant',
-      text: 'I can produce a PDF, DXF or SVG. Everything on the sheet has to be confirmed first.',
-      actions: [
-        { id: nextId('act'), label: 'Open export', intent: { kind: 'open', panel: 'export' }, tone: 'primary' },
-      ],
-    }),
+    respond: () => exportMessage(),
   },
   {
     test: /\b(suggest|ai|trust|why.*purple|provenance)\b/i,
     terms: ['suggestion', 'suggested', 'provenance', 'trust', 'purple', 'confirm', 'unconfirmed', 'where did it come from'],
-    respond: () => ({
-      id: nextId('msg'),
-      role: 'assistant',
-      text: EXPLANATIONS.provenance,
-    }),
+    respond: () => provenanceMessage(),
   },
   {
     test: /\b(point|coordinate|easting|northing|edit data)\b/i,
     terms: ['point', 'points', 'coordinate', 'coordinates', 'easting', 'northing', 'corner', 'corners', 'station'],
-    respond: (ctx) => ({
-      id: nextId('msg'),
-      role: 'assistant',
-      text: `You have ${ctx.model.points.length} survey points. You can edit them in the data panel.`,
-      actions: [
-        { id: nextId('act'), label: 'Open survey data', intent: { kind: 'open', panel: 'data' }, tone: 'primary' },
-      ],
-    }),
+    respond: (ctx) => pointsMessage(ctx),
   },
 ];
 

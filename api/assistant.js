@@ -1,13 +1,17 @@
 /**
  * The assistant endpoint, as a Vercel serverless function.
  *
- * Same contract as the local reference server in apps/web/server/assistant.mjs,
- * which is the file to read for the reasoning; this one exists so a deployed
- * build can reach a model without the browser ever holding a key. Point the app
- * at it by setting VITE_ASSISTANT_ENDPOINT=/api/assistant at build time.
+ * The model's job here is classification, not answering: it decides what the
+ * surveyor meant and which capability handles it, and the browser routes that
+ * to a deterministic responder which produces the figures. See
+ * apps/web/src/ai/classification.ts for why the line is drawn there.
+ *
+ * The tool definition and the brief live in _assistant-core.mjs, shared with
+ * the local reference server, because two copies of a schema the browser
+ * validates against is a drift bug waiting to be written.
  *
  * Off by default. With no ANTHROPIC_API_KEY configured this replies 503 and the
- * app falls back to its rule planner, so a deployment that has not opted in
+ * app falls back to its keyword planner, so a deployment that has not opted in
  * spends nothing and still works.
  *
  * A caution worth taking seriously before opting in: this is an unauthenticated
@@ -19,62 +23,7 @@
 
 import Anthropic from '@anthropic-ai/sdk';
 
-/** Kept in step with `PROPOSE_ACTIONS_TOOL` in apps/web/src/ai/intent-schema.ts. */
-const TOOL = {
-  name: 'propose_actions',
-  description:
-    'Reply to the surveyor and offer up to four follow-up actions. Every ' +
-    'reply must go through this tool. You cannot state survey values — ' +
-    'bearings, distances, areas, coordinates — because they are calculated ' +
-    'and shown by the drawing engine, not written by you.',
-  strict: true,
-  input_schema: {
-    type: 'object',
-    additionalProperties: false,
-    required: ['message', 'actions'],
-    properties: {
-      message: { type: 'string' },
-      actions: {
-        type: 'array',
-        items: {
-          type: 'object',
-          additionalProperties: false,
-          required: ['label', 'kind', 'argument'],
-          properties: {
-            label: { type: 'string' },
-            kind: {
-              type: 'string',
-              enum: [
-                'suggest-building',
-                'suggest-note',
-                'show',
-                'open',
-                'explain',
-                'guide',
-                'tool',
-                'new-project',
-                'none',
-              ],
-            },
-            argument: { type: 'string' },
-          },
-        },
-      },
-    },
-  },
-};
-
-const SYSTEM = `You are the assistant inside a survey plan drafting tool, sitting beside the drawing.
-
-You decide what to say and what to offer next. You do not decide geometry. Bearings, distances, areas, coordinates and label positions are calculated by deterministic engines and rendered from measured data — you must never state one, estimate one, or repeat one back as fact. If the surveyor asks for a value, point them at where the drawing shows it.
-
-You may propose a building. That is a proposal only: the engines choose its position and size, and the surveyor confirms it before it becomes survey data. Propose by name; never by dimension.
-
-Reply only through the propose_actions tool. Keep the message to a few sentences of plain language a novice surveyor can follow. Offer actions only when they genuinely help — an empty action list is fine.
-
-Use "show" only with an id that appears in the survey summary you were given.
-
-You are also the way through the interface, so answer "how do I ..." questions and offer the action that does it. "guide" walks the surveyor through a task; its argument is one of new-project, name-site, add-points, paste-table, photograph-note, traverse, draw-boundary, measure, add-building, add-note, labels, review, export, undo. "tool" switches the drawing tool: select, draw, measure. "open" opens a panel: data, validation, export, layers, project. "new-project" offers to start again — it asks the surveyor to confirm before anything is replaced, and you cannot skip that step.`;
+import { CLASSIFY_TOOL, SYSTEM, buildMessages } from './_assistant-core.mjs';
 
 export default async function handler(req, res) {
   if (req.method !== 'POST') {
@@ -99,22 +48,16 @@ export default async function handler(req, res) {
     const body = typeof req.body === 'string' ? JSON.parse(req.body) : (req.body ?? {});
     const question = String(body.question ?? '').slice(0, 2000);
     const survey = body.survey ?? {};
+    const history = body.history ?? [];
 
     const response = await new Anthropic().messages.create({
       model: 'claude-opus-5',
       max_tokens: 4096,
       thinking: { type: 'adaptive' },
       system: SYSTEM,
-      tools: [TOOL],
-      tool_choice: { type: 'tool', name: 'propose_actions' },
-      messages: [
-        {
-          role: 'user',
-          content:
-            `Survey summary:\n${JSON.stringify(survey, null, 2)}\n\n` +
-            `The surveyor asks: ${question}`,
-        },
-      ],
+      tools: [CLASSIFY_TOOL],
+      tool_choice: { type: 'tool', name: 'classify_and_reply' },
+      messages: buildMessages(question, survey, history),
     });
 
     // Check stop_reason before reading content: a refusal returns HTTP 200 with

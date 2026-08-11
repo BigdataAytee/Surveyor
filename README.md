@@ -97,23 +97,46 @@ what to propose. It proposes geometry as ordinary survey data tagged
 human accepts.
 
 It is also the way through the interface. `TASKS` in that file is every action
-the app can perform, written in the words someone would ask for it, with the
-steps and — where the app can simply do it — the button that does. Ask "how do I
-start a new project" and you get the steps and the button; ask "how do I measure
-that" and it puts you in the tool; ask for something to be done rather than
-explained, and it does it.
+the app can perform, with the steps and — where the app can simply do it — the
+button that does.
 
-Matching is by keyword score rather than by phrase pattern (`bestByKeyword`).
-Patterns are precise and brittle in the same stroke: "size of the land" matched
-and "size of this land" did not, one word apart, and the reply to the second was
-a menu. Scoring means a question has to be *about* something, not phrased any
-particular way. The one thing it cannot do is confirm a
-destructive action on your behalf: `new-project` opens the question,
-`confirm-new-project` answers it, and only the second one is missing from the
-vocabulary a model shares.
+### Understanding the question
 
-Two planners implement that interface. The default is rule-based and needs no
-credentials. A language model can drive it instead:
+**The model decides what you meant. The engines decide what is true.**
+
+`apps/web/src/ai/classification.ts` asks a model for a structured
+classification, not an answer: a restatement of what you meant, which
+capability handles it, whether it is in scope, and how sure it is. The app then
+decides what to do with that — the "act or ask" decision belongs to the app,
+because handing it to the party that produced the guess would make the
+confidence level decorative.
+
+| Verdict | What happens |
+|---|---|
+| in scope, `high` | the capability's responder answers, reading every figure off the pipeline |
+| in scope, `medium` | the same, prefixed with what it assumed, so a misread is visible |
+| `low` or `ambiguous` | it asks, with the readings it was choosing between offered as buttons |
+| out of scope | it says so in its own words, and says what it is for |
+
+The scope is declared once in `apps/web/src/ai/scope.ts` and feeds all three
+consumers: the model's brief, the tool schema, and the router. A scope the model
+believes in and a router that disagrees is an assistant that promises things the
+app cannot do.
+
+What the model never gets is the number. Every survey value comes from `answer`,
+which calls the same deterministic responders the offline planner uses, so a
+classification can send a reply to the wrong subject but cannot put a wrong
+figure in it. No field in the classification schema accepts a number at all —
+that is structural, not a matter of prompting.
+
+Recent turns go with each request, so "what about the garage?" and a bare "yes"
+after a clarifying question mean something.
+
+Two planners implement the same interface. Without an endpoint the assistant
+falls back to keyword scoring (`bestByKeyword`) — a worse assistant, but one
+that needs no credentials and still answers the common questions. Every model
+failure lands there too: a rejected classification, a timeout, an unreachable
+endpoint. A language model drives it instead when configured:
 
 ```bash
 ANTHROPIC_API_KEY=... npm run assistant --workspace @surveyor/web
@@ -135,18 +158,17 @@ about the *document*, which is why the photo is shown next to the numbers: it is
 the one part you can check by looking.
 
 The model is bounded twice. A strict tool schema
-(`apps/web/src/ai/intent-schema.ts`) enumerates the intent vocabulary, and
-nothing in it accepts a number — so a model cannot express a coordinate,
-dimension, or bearing. Then `validateProposal` re-derives every action from
-scratch and rejects whatever it cannot account for, checking `show` targets
-against the ids actually in the survey. The schema is the seatbelt; the
-validator is the crumple zone. A rejected reply falls back to the rule planner,
-so the assistant degrades rather than going silent.
+(`apps/web/src/ai/classification.ts`) enumerates the capabilities and confidence
+levels, with no numeric field anywhere. Then `validateClassification` re-derives
+every field and rejects whatever it cannot account for — an invented capability,
+an argument naming a task or panel that does not exist, a `show` target that is
+not on the drawing, a reply claiming to be in scope while naming nothing that
+handles it. The schema is the seatbelt; the validator is the crumple zone.
 
 ## Testing
 
 ```bash
-npm test                                    # 158 tests across contracts, engine and web
+npm test                                    # 159 tests across contracts, engine and web
 npm run smoke --workspace @surveyor/web     # browser flows (needs a preview server)
 ```
 
@@ -165,6 +187,21 @@ npm run build --workspace @surveyor/web
 npx vite preview --port 4173 &
 npm run smoke --workspace @surveyor/web
 ```
+
+The classifier needs its own pass, because the endpoint is inlined at build
+time and a build without one can never exercise the model path:
+
+```bash
+cd apps/web
+VITE_ASSISTANT_ENDPOINT=/__classify npx vite build
+npx vite preview --port 4174 &
+SMOKE_URL=http://127.0.0.1:4174/ npm run smoke:classifier
+```
+
+It stubs the endpoint and checks the half that is ours: the conversation is
+sent, a classification is validated before it is believed, an unsure reading
+asks instead of answering, and the figure in the reply comes from the engine —
+the stub deliberately returns a wrong one, and it must not reach the screen.
 
 ## Deploying
 

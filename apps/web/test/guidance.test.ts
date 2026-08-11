@@ -28,7 +28,8 @@ import {
   type Intent,
   type TaskName,
 } from '../src/ai/assistant.js';
-import { ACTION_KINDS, PANELS, TASK_NAMES, TOOLS, validateProposal } from '../src/ai/intent-schema.js';
+import { validateClassification } from '../src/ai/classification.js';
+import { CAPABILITIES } from '../src/ai/scope.js';
 
 const MODEL: SurveyDataModel = {
   metadata: { jurisdiction: 'uk-land-registry', siteAddress: '25 High Street' },
@@ -84,12 +85,12 @@ test('asking to start a new project offers to start a new project', () => {
 });
 
 test('starting a new project is offered, never done in the same breath', () => {
-  // The reply from the planner may only ever *open* the question. Confirming
-  // is a tap, and the vocabulary a model shares cannot express the tap.
+  // The keyword planner may only ever *open* the question. Confirming is a
+  // tap, and no vocabulary a model shares can express the tap.
   const kinds = intents('create a new project').map((intent) => intent.kind);
   assert.ok(kinds.includes('new-project'));
   assert.ok(!kinds.includes('confirm-new-project'));
-  assert.ok(!(ACTION_KINDS as readonly string[]).includes('confirm-new-project'));
+  assert.ok(!(CAPABILITIES as readonly string[]).includes('confirm-new-project'));
 });
 
 // ---------------------------------------------------------------------------
@@ -222,48 +223,28 @@ test('nothing matched offers the things it can do, not a shrug', () => {
 });
 
 // ---------------------------------------------------------------------------
-// The model shares the same vocabulary
+// The model reaches the same guides
 // ---------------------------------------------------------------------------
 
-test('a model can offer guidance, and only for tasks that exist', () => {
-  for (const task of TASK_NAMES) {
-    const result = validateProposal(
-      { message: 'Here is how.', actions: [{ label: 'Show me', kind: 'guide', argument: task }] },
+test('a model can send the surveyor to any guide that exists, and no others', () => {
+  const classify = (argument: string) =>
+    validateClassification(
+      {
+        understanding: 'They want to know how.',
+        scope: 'in-scope',
+        capability: 'guide',
+        argument,
+        confidence: 'high',
+        message: 'Here is how.',
+        clarification_question: '',
+        clarification_options: [],
+        actions: [],
+      },
       MODEL,
     );
-    assert.equal(result.ok, true, task);
+
+  for (const guide of TASKS) {
+    assert.equal(classify(guide.task).ok, true, guide.task);
   }
-
-  const invented = validateProposal(
-    { message: 'Here is how.', actions: [{ label: 'Do it', kind: 'guide', argument: 'delete-everything' }] },
-    MODEL,
-  );
-  assert.equal(invented.ok, false);
-});
-
-test('a model can switch tools, and only to tools that exist', () => {
-  for (const tool of TOOLS) {
-    const result = validateProposal(
-      { message: 'Switching.', actions: [{ label: 'Go', kind: 'tool', argument: tool }] },
-      MODEL,
-    );
-    assert.equal(result.ok, true, tool);
-  }
-
-  const invented = validateProposal(
-    { message: 'Switching.', actions: [{ label: 'Go', kind: 'tool', argument: 'bulldoze' }] },
-    MODEL,
-  );
-  assert.equal(invented.ok, false);
-});
-
-test('the project panel is openable and the panel list has no strays', () => {
-  for (const panel of PANELS) {
-    const result = validateProposal(
-      { message: 'Opening.', actions: [{ label: 'Open', kind: 'open', argument: panel }] },
-      MODEL,
-    );
-    assert.equal(result.ok, true, panel);
-  }
-  assert.ok((PANELS as readonly string[]).includes('project'));
+  assert.equal(classify('delete-everything').ok, false);
 });

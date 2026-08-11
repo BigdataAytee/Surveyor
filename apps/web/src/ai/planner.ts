@@ -21,11 +21,12 @@ import type { SurveyDataModel } from '@surveyor/contracts';
 
 import {
   respond,
-  type AssistantAction,
   type AssistantContext,
   type AssistantMessage,
 } from './assistant.js';
-import { validateProposal } from './intent-schema.js';
+import { validateClassification } from './classification.js';
+import { routeClassification } from './route.js';
+import type { Classification } from './scope.js';
 
 // ---------------------------------------------------------------------------
 // Transport
@@ -41,7 +42,23 @@ export interface PlannerRequest {
    * thing to leak.
    */
   readonly survey: SurveySummary;
+  /**
+   * Recent turns, oldest first.
+   *
+   * Without these "what about the garage?" is unanswerable, and so is "yes" —
+   * which is what people say after being asked a clarifying question. A
+   * classifier with no memory of what it just asked cannot use the answer.
+   */
+  readonly history: readonly ConversationTurn[];
 }
+
+export interface ConversationTurn {
+  readonly role: 'user' | 'assistant';
+  readonly text: string;
+}
+
+/** Enough context to follow a thread; not so much that the payload grows without bound. */
+export const HISTORY_TURNS = 8;
 
 export interface SurveySummary {
   readonly siteAddress: string | null;
@@ -64,7 +81,11 @@ export type PlannerTransport = (request: PlannerRequest) => Promise<unknown>;
 
 export interface Planner {
   readonly name: 'rules' | 'model';
-  readonly reply: (question: string, ctx: AssistantContext) => Promise<AssistantMessage>;
+  readonly reply: (
+    question: string,
+    ctx: AssistantContext,
+    history?: readonly ConversationTurn[],
+  ) => Promise<AssistantMessage>;
 }
 
 // ---------------------------------------------------------------------------
@@ -82,22 +103,40 @@ export interface ModelPlannerOptions {
   readonly transport: PlannerTransport;
   /** Called when a model reply is rejected, so the failure is visible. */
   readonly onFallback?: (reason: string) => void;
+  /** Every accepted classification, for logging what the assistant understood. */
+  readonly onClassified?: (classification: Classification) => void;
   readonly timeoutMs?: number;
 }
 
+/**
+ * Understand the question with a model, answer it with the engines.
+ *
+ * The model's whole job is the classification: what did the surveyor mean,
+ * which capability is that, is it in scope, how sure am I. `routeClassification`
+ * then decides whether that is sure enough to act on, and the capability's
+ * responder produces the figures. The model chooses the question; it never
+ * writes the answer to one that carries a survey value.
+ *
+ * Every failure lands on the keyword planner rather than on the surveyor. It is
+ * a worse assistant, but it is one, and a degraded reply beats a spinner.
+ */
 export function modelPlanner(options: ModelPlannerOptions): Planner {
   const fallback = rulePlanner();
 
   return {
     name: 'model',
-    reply: async (question, ctx) => {
+    reply: async (question, ctx, history = []) => {
       try {
         const raw = await withTimeout(
-          options.transport({ question, survey: summarise(ctx) }),
+          options.transport({
+            question,
+            survey: summarise(ctx),
+            history: history.slice(-HISTORY_TURNS),
+          }),
           options.timeoutMs ?? 20_000,
         );
 
-        const validated = validateProposal(raw, ctx.model);
+        const validated = validateClassification(raw, ctx.model);
         if (!validated.ok) {
           // A model that goes off-vocabulary is a rules turn, not an error
           // shown to the surveyor — but it must not be silent either.
@@ -105,19 +144,8 @@ export function modelPlanner(options: ModelPlannerOptions): Planner {
           return fallback.reply(question, ctx);
         }
 
-        return {
-          id: `msg_model_${Date.now().toString(36)}`,
-          role: 'assistant',
-          text: validated.proposal.message,
-          actions: validated.proposal.actions.map(
-            (action, index): AssistantAction => ({
-              id: `act_model_${Date.now().toString(36)}_${index}`,
-              label: action.label,
-              intent: action.intent,
-              ...(index === 0 ? { tone: 'primary' as const } : {}),
-            }),
-          ),
-        };
+        options.onClassified?.(validated.classification);
+        return routeClassification(validated.classification, validated.actions, ctx);
       } catch (error) {
         options.onFallback?.(error instanceof Error ? error.message : String(error));
         return fallback.reply(question, ctx);

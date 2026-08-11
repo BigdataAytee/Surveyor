@@ -9,8 +9,9 @@
     "preview": "vite preview",
     "typecheck": "tsc --noEmit -p tsconfig.json",
     "smoke": "node scripts/smoke.mjs",
-    "test": "tsc -p tsconfig.test.json && node --test \"dist-test/test/**/*.test.js\"",
-    "assistant": "node server/assistant.mjs"
+    "test": "rm -rf dist-test && tsc -p tsconfig.test.json && node --test \"dist-test/test/**/*.test.js\"",
+    "assistant": "node server/assistant.mjs",
+    "smoke:classifier": "node scripts/smoke.mjs --classifier"
   },
   "dependencies": {
     "@surveyor/contracts": "0.1.0",
