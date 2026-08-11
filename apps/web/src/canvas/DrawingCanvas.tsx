@@ -423,9 +423,22 @@ export function DrawingCanvas({
             reachable,
             moving,
           );
-        } else if (hit === null && tool === 'select' && onSelectMany && viewport) {
-          // Box select begins on empty canvas; starting on an object would make
-          // dragging it impossible later.
+        } else if (
+          hit === null &&
+          tool === 'select' &&
+          onSelectMany &&
+          viewport &&
+          // Shift, and only shift.
+          //
+          // A plain drag pans, because moving about the drawing is the gesture
+          // people make constantly and a touch screen has nothing else to make
+          // it with. Box select briefly took the plain drag and panning stopped
+          // working — the drawing appeared to be nailed down, and dragging it
+          // drew a selection rectangle instead. Shift is already this app's
+          // "and also" modifier for clicking, so extending it to dragging
+          // keeps one idea rather than adding a second.
+          event.shiftKey
+        ) {
           gesture.current.banding = true;
         }
       }
@@ -483,9 +496,8 @@ export function DrawingCanvas({
         cancelLongPress();
       }
 
-      // A drag that began on empty canvas in select mode is a selection box,
-      // not a pan. Panning stays available from anywhere else, and from two
-      // fingers, so nothing is lost.
+      // A shift-drag on empty canvas is a selection box. Every other drag
+      // pans.
       if (gesture.current.banding) {
         if (dragged) setBand({ from: gesture.current.start, to: point });
         return;
