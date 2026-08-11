@@ -20,4 +20,8 @@ export * from './compose/composer.js';
 export * from './export/svg.js';
 export * from './export/dxf.js';
 export * from './export/pdf.js';
+export * from './edit/transform.js';
+export * from './edit/intersect.js';
+export * from './edit/modify.js';
+export * from './edit/snap.js';
 export * from './pipeline.js';
