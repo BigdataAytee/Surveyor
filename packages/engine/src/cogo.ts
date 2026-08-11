@@ -462,6 +462,80 @@ function ringAreaWithCurves(
 }
 
 // ---------------------------------------------------------------------------
+// Internal angles
+// ---------------------------------------------------------------------------
+
+export interface InternalAngle {
+  /** Index of the corner in the vertex list. */
+  readonly index: number;
+  /** The angle inside the parcel at that corner, in degrees. */
+  readonly degrees: number;
+}
+
+/**
+ * The angle inside a closed boundary at each corner.
+ *
+ * A deed and a set of field notes both quote these, and a plan checked against
+ * either has to show the same numbers — so they are computed from the same
+ * vertices the area and the dimensions come from rather than measured off a
+ * drawing.
+ *
+ * "Inside" is decided by the ring's winding, not assumed. A boundary entered
+ * clockwise and one entered anticlockwise enclose the same ground, and a
+ * function that reported reflex angles for one of them would be right about
+ * the arithmetic and useless on the plan.
+ *
+ * The angles of a simple closed polygon sum to (n − 2) × 180°, which is the
+ * property the tests check: it holds for any shape, convex or not, and is
+ * exactly the check a surveyor would run by hand.
+ */
+export function internalAngles(
+  vertices: readonly Coordinates[],
+): readonly InternalAngle[] {
+  const ring = closedVertices(vertices);
+  if (ring.length < 3) return [];
+
+  // Anticlockwise in a north-up frame means positive signed area.
+  const counterClockwise = signedArea(ring) > 0;
+
+  return ring.map((corner, index) => {
+    const previous = ring[(index - 1 + ring.length) % ring.length]!;
+    const next = ring[(index + 1) % ring.length]!;
+
+    const incoming = Math.atan2(
+      previous.easting - corner.easting,
+      previous.northing - corner.northing,
+    );
+    const outgoing = Math.atan2(
+      next.easting - corner.easting,
+      next.northing - corner.northing,
+    );
+
+    /*
+     * The turn from one leg to the other, taken on the side the interior is.
+     *
+     * Worked through at a corner rather than guessed: on an anticlockwise
+     * rectangle the first corner looks north to the previous vertex and east
+     * to the next, with the interior between them — so the interior angle is
+     * `outgoing - incoming`. Clockwise reverses which side that is.
+     */
+    let turn = counterClockwise ? outgoing - incoming : incoming - outgoing;
+    while (turn < 0) turn += 2 * Math.PI;
+    while (turn >= 2 * Math.PI) turn -= 2 * Math.PI;
+
+    return { index, degrees: (turn * 180) / Math.PI };
+  });
+}
+
+/** Drop a repeated closing vertex, which would produce a zero-length leg. */
+function closedVertices(vertices: readonly Coordinates[]): readonly Coordinates[] {
+  const first = vertices[0];
+  const last = vertices[vertices.length - 1];
+  if (!first || !last || vertices.length < 2) return vertices;
+  return distanceBetween(first, last) < 1e-9 ? vertices.slice(0, -1) : vertices;
+}
+
+// ---------------------------------------------------------------------------
 // Segment intersection — used by the Validation Engine
 // ---------------------------------------------------------------------------
 

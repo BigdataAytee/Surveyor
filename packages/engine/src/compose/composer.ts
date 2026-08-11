@@ -21,7 +21,7 @@ import { labelsBlockingExport } from '@surveyor/contracts';
 
 import { boundsOf, type ResolvedRing } from '../cogo.js';
 import { UNIT_ABBREVIATION } from '../crs.js';
-import type { Drawing, StrokeStyle } from '../drawing.js';
+import type { Drawing, PointSymbol, StrokeStyle } from '../drawing.js';
 import {
   contextFor,
   renderContent,
@@ -100,6 +100,8 @@ export interface TitleBlockEntry {
 }
 
 export interface LegendEntry {
+  /** Set when the entry is a point symbol rather than a line style. */
+  readonly symbol?: PointSymbol;
   readonly style: StrokeStyle;
   readonly description: string;
 }
@@ -497,7 +499,15 @@ function titleBlockValue(
   }
 }
 
-const LEGEND_DESCRIPTIONS: Partial<Record<StrokeStyle, string>> = {
+/**
+ * Every stroke style, described.
+ *
+ * A complete record rather than a partial one: a style with no entry is a line
+ * on a plan that the legend does not explain, and the reviewer has no way to
+ * find out what it is. Making it complete means adding a stroke style forces
+ * you to say what it means, here, at the moment you add it.
+ */
+const LEGEND_DESCRIPTIONS: Record<StrokeStyle, string> = {
   boundary: 'Boundary line',
   'boundary-curve': 'Boundary curve',
   building: 'Building',
@@ -508,21 +518,55 @@ const LEGEND_DESCRIPTIONS: Partial<Record<StrokeStyle, string>> = {
   water: 'Watercourse',
   vegetation: 'Vegetation',
   easement: 'Easement',
+  wall: 'Wall',
+  utility: 'Service run',
+  annotation: 'Annotation',
+  'point-marker': 'Survey point',
+};
+
+/**
+ * Symbols get legend entries too.
+ *
+ * A cross on a plan means nothing to a reviewer who has not been told it is a
+ * spot height, and symbols were being left out of the legend entirely — so a
+ * drawing full of levels arrived with no key to them.
+ */
+const SYMBOL_DESCRIPTIONS: Partial<Record<PointSymbol, string>> = {
+  'boundary-corner': 'Boundary corner',
+  'survey-station': 'Survey station',
+  'found-marker': 'Found marker',
+  level: 'Spot height',
+  benchmark: 'Benchmark',
+  tree: 'Tree',
+  gate: 'Gate',
 };
 
 /** Only styles actually used are listed — a legend of absent symbols is noise. */
 function buildLegend(drawing: Drawing): readonly LegendEntry[] {
-  const used = new Set<StrokeStyle>();
+  const styles = new Set<StrokeStyle>();
+  const symbols = new Set<PointSymbol>();
+
   for (const layer of drawing.layers) {
     for (const element of layer.elements) {
-      if (element.kind !== 'symbol') used.add(element.style);
+      if (element.kind === 'symbol') symbols.add(element.symbol);
+      else styles.add(element.style);
     }
   }
 
-  return [...used]
-    .filter((style) => LEGEND_DESCRIPTIONS[style] !== undefined)
+  const lines = [...styles]
     .sort()
-    .map((style) => ({ style, description: LEGEND_DESCRIPTIONS[style]! }));
+    .map((style) => ({ style, description: LEGEND_DESCRIPTIONS[style] }));
+
+  const marks = [...symbols]
+    .filter((symbol) => SYMBOL_DESCRIPTIONS[symbol] !== undefined)
+    .sort()
+    .map((symbol) => ({
+      style: 'point-marker' as const,
+      symbol,
+      description: SYMBOL_DESCRIPTIONS[symbol]!,
+    }));
+
+  return [...lines, ...marks];
 }
 
 function buildNotes(

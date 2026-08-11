@@ -543,3 +543,19 @@
   justify-content: space-between;
   gap: var(--space-3);
 }
+
+.angles {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(9rem, 1fr));
+  gap: var(--space-2);
+  list-style: none;
+  padding: 0;
+  margin-bottom: var(--space-3);
+}
+
+.angles__item {
+  display: flex;
+  justify-content: space-between;
+  gap: var(--space-2);
+  font-size: var(--text-caption);
+}

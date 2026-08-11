@@ -103,6 +103,11 @@ reports real progress rather than animating a timer.
   Closure is computed and shown while you type, because on a traverse — unlike a
   coordinate boundary, which closes by construction — that number decides
   whether the survey is usable.
+- **Review** lists the internal angle at every boundary corner beside the
+  closure figures, with their total and what it should be — the check a
+  surveyor runs by hand. They are computed from the same corners the area and
+  the dimensions come from, so a plan checked against a deed shows the deed's
+  figures rather than ones measured off the drawing.
 - **Projects** keeps every survey you have saved, with a thumbnail drawn from
   the stored geometry, when it was last edited, how big it is, and a version
   history. Open, rename, duplicate, delete, or restore an earlier version —
@@ -194,7 +199,7 @@ handles it. The schema is the seatbelt; the validator is the crumple zone.
 ## Testing
 
 ```bash
-npm test                                    # 203 tests across contracts, engine and web
+npm test                                    # 208 tests across contracts, engine and web
 npm run smoke --workspace @surveyor/web     # browser flows (needs a preview server)
 ```
 

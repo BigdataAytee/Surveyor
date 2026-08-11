@@ -167,6 +167,19 @@ export interface BearingFormatOptions {
  * Render a bearing in the CRS's convention. The Plan Composer's jurisdiction
  * template chooses the convention and precision; label text is never hand-built.
  */
+/**
+ * A plain angle in degrees, minutes and seconds — `92°14'32"`.
+ *
+ * Distinct from `formatBearing`, which formats a *direction* and so carries a
+ * quadrant. An internal angle has no direction; printing one as `N 92° E`
+ * would be nonsense on the plan.
+ */
+export function formatAngle(degrees: number, precision = 0): string {
+  const dms = toDms(Math.abs(degrees), precision);
+  const sign = degrees < 0 ? '-' : '';
+  return `${sign}${dms.degrees}°${pad(dms.minutes, 0)}'${pad(dms.seconds, precision)}"`;
+}
+
 export function formatBearing(
   azimuth: number,
   convention: BearingConvention,

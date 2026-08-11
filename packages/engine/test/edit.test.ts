@@ -14,7 +14,7 @@ import test from 'node:test';
 
 import type { Coordinates, SiteFeature } from '@surveyor/contracts';
 
-import { distanceBetween, polygonArea, signedArea } from '../src/cogo.js';
+import { distanceBetween, internalAngles, polygonArea, signedArea } from '../src/cogo.js';
 import { buildDrawing } from '../src/drawing.js';
 import {
   displacement,
@@ -553,4 +553,57 @@ test('every feature kind has a stroke style, so none is drawn as an unexplained 
       .find((candidate) => candidate.id === `f_${kind}`);
     assert.ok(element, `${kind} was not drawn at all`);
   }
+});
+
+// ---------------------------------------------------------------------------
+// Internal angles
+// ---------------------------------------------------------------------------
+
+test('the internal angles of a rectangle are four right angles', () => {
+  const angles = internalAngles(RECT);
+  assert.equal(angles.length, 4);
+  for (const angle of angles) near(angle.degrees, 90, 1e-9);
+});
+
+test('internal angles sum to (n − 2) × 180, whatever the shape', () => {
+  // The check a surveyor would run by hand, and it holds for any simple
+  // polygon — convex or not — which is why it is the property worth testing
+  // rather than a list of expected values.
+  const shapes: readonly (readonly Coordinates[])[] = [
+    RECT,
+    [at(0, 0), at(10, 0), at(10, 10)],
+    // An L, so one corner is reflex.
+    [at(0, 0), at(20, 0), at(20, 8), at(8, 8), at(8, 20), at(0, 20)],
+    [at(0, 0), at(15, 2), at(18, 11), at(7, 16), at(-2, 9)],
+  ];
+
+  for (const shape of shapes) {
+    const total = internalAngles(shape).reduce((sum, angle) => sum + angle.degrees, 0);
+    near(total, (shape.length - 2) * 180, 1e-6);
+  }
+});
+
+test('a reflex corner is reported as reflex, not folded back under 180', () => {
+  // The inside of an L really is more than a straight line at the notch, and
+  // reporting 90° there would put a figure on the plan that contradicts the
+  // drawing it sits on.
+  const ell = [at(0, 0), at(20, 0), at(20, 8), at(8, 8), at(8, 20), at(0, 20)];
+  const angles = internalAngles(ell);
+  const reflex = angles.filter((angle) => angle.degrees > 180);
+  assert.equal(reflex.length, 1);
+  near(reflex[0]!.degrees, 270, 1e-9);
+});
+
+test('winding does not change the angles, because it does not change the ground', () => {
+  const clockwise = [...RECT].reverse();
+  const a = internalAngles(RECT).map((angle) => angle.degrees);
+  const b = internalAngles(clockwise).map((angle) => angle.degrees);
+
+  near(a.reduce((x, y) => x + y, 0), b.reduce((x, y) => x + y, 0), 1e-9);
+  for (const angle of b) near(angle, 90, 1e-9);
+});
+
+test('a repeated closing vertex does not produce a zero-length leg', () => {
+  const closed = [...RECT, RECT[0]!];
+  assert.equal(internalAngles(closed).length, 4);
 });

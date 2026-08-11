@@ -31,10 +31,11 @@ import type {
 import {
   boundsOf,
   distanceBetween,
+  internalAngles,
   type ResolvedRing,
   type ResolvedSegment,
 } from '../cogo.js';
-import { convertArea, formatBearing, UNIT_ABBREVIATION } from '../crs.js';
+import { convertArea, formatAngle, formatBearing, UNIT_ABBREVIATION } from '../crs.js';
 
 // ---------------------------------------------------------------------------
 // Context and formatting
@@ -230,6 +231,33 @@ const TEMPLATES: readonly Template[] = [
       if (r.feature?.kind !== 'feature') return null;
       const status = r.feature.feature.status;
       return status === undefined || status === 'existing' ? null : `(${status})`;
+    },
+  },
+  {
+    /**
+     * The angle inside the parcel at a corner, e.g. `92°14'32"`.
+     *
+     * Computed from the ring the area comes from, so a plan checked against a
+     * deed shows the same figure the deed quotes rather than one measured off
+     * the drawing.
+     */
+    id: 'point.internalAngle',
+    description: 'The internal angle at a boundary corner',
+    bindings: ['point'],
+    render: (r, ctx) => {
+      const resolved = r.point;
+      if (resolved?.kind !== 'point') return null;
+
+      const ring = ctx.rings[0];
+      if (!ring) return null;
+
+      const index = ring.segments.findIndex(
+        (segment) => segment.from === resolved.point.id,
+      );
+      if (index < 0) return null;
+
+      const angle = internalAngles(ring.vertices)[index];
+      return angle ? formatAngle(angle.degrees) : null;
     },
   },
   {

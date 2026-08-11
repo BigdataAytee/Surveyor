@@ -7,7 +7,10 @@
  * user's behalf — A.1 §4.
  */
 
+import { useMemo } from 'react';
+
 import type { ValidationIssue, ValidationReport } from '@surveyor/contracts';
+import { formatAngle, internalAngles } from '@surveyor/engine';
 
 import { Button, Card, StatusBadge, SuccessState, type StatusTone } from '../ui/primitives.js';
 import { SlideUp } from '../ui/motion.js';
@@ -35,6 +38,18 @@ const OPTION_LABEL: Record<string, string> = {
 
 export function ValidationSheet({ onOpenData }: { readonly onOpenData: () => void }) {
   const { pipeline, dispatch } = useProject();
+
+  /** The angle at each boundary corner, named by the corner it belongs to. */
+  const angles = useMemo(() => {
+    const ring = pipeline.ok ? pipeline.rings[0] : undefined;
+    if (!ring) return [];
+    return internalAngles(ring.vertices).map((angle, index) => ({
+      id: ring.segments[index]?.from ?? `#${index + 1}`,
+      degrees: angle.degrees,
+    }));
+  }, [pipeline]);
+
+  const angleTotal = angles.reduce((sum, angle) => sum + angle.degrees, 0);
 
   const report: ValidationReport | undefined = pipeline.ok
     ? pipeline.validation
@@ -116,6 +131,30 @@ export function ValidationSheet({ onOpenData }: { readonly onOpenData: () => voi
               </div>
             </dl>
           ))}
+        </Card>
+      ) : null}
+
+      {/*
+        The angles a deed quotes, computed from the same corners the area and
+        the dimensions come from — so a plan checked against a deed shows the
+        deed's figures rather than ones measured off the drawing. The sum is
+        shown beside them because it is the check a surveyor runs by hand.
+      */}
+      {angles.length > 0 ? (
+        <Card tone="sunken">
+          <h4 className="panel__section">Internal angles</h4>
+          <ul className="angles">
+            {angles.map((angle) => (
+              <li key={angle.id} className="angles__item">
+                <span className="numeric">{angle.id}</span>
+                <span className="numeric">{formatAngle(angle.degrees)}</span>
+              </li>
+            ))}
+          </ul>
+          <p className="panel__body">
+            They add up to {formatAngle(angleTotal)}, which for {angles.length} corners
+            should be {formatAngle((angles.length - 2) * 180)}.
+          </p>
         </Card>
       ) : null}
     </div>
