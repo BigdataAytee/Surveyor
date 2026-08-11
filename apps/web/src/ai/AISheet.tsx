@@ -18,6 +18,7 @@ import { Button, Card } from '../ui/primitives.js';
 import { SlideUp } from '../ui/motion.js';
 import { EMPTY_MODEL, useProject } from '../state/store.js';
 import type { Suggestion } from '../state/store.js';
+import { deleteProject, newProjectId, saveProject } from '../state/library.js';
 import {
   explainMessage,
   openingMessage,
@@ -84,6 +85,75 @@ export function AISheet({ onOpenPanel, onSelectTool }: AISheetProps) {
   }
 
   /**
+   * Open a blank sheet as a *separate* project.
+   *
+   * This used to empty the open project instead — `set-model` with an empty
+   * model — which meant the autosave promptly wrote the blank plan over the
+   * user's survey. There was no new project and no old one either: the work
+   * was simply gone, and the library that exists to prevent exactly that never
+   * saw it happen. The Project panel had always done this correctly; the
+   * assistant's path had not been brought across.
+   */
+  function startFreshProject(): void {
+    dispatch({ type: 'open-project', id: newProjectId(), model: EMPTY_MODEL });
+  }
+
+  /**
+   * Answer a request to start a new project.
+   *
+   * The reply *is* the question, rather than a button that asks it. Someone who
+   * has just typed "start a new project" has already made that decision; making
+   * them press a button labelled with what they just said, only to be asked
+   * something else, is a step that exists for the app's benefit and not theirs.
+   *
+   * What is genuinely undecided is the plan being left behind, so that is what
+   * gets asked.
+   */
+  function beginNewProject(): void {
+    // An empty plan has nothing to lose, so asking would be a question with no
+    // stakes and only one sensible answer.
+    const points = state.model.points.length;
+    const features = state.model.siteFeatures.length;
+
+    if (points === 0 && features === 0) {
+      startFreshProject();
+      push({
+        id: `msg_${Date.now()}`,
+        role: 'assistant',
+        text: 'Done \u2014 a blank sheet. Paste your points in, photograph a note, or tell me how you\u2019d like to start.',
+      });
+      return;
+    }
+
+    // Both answers open a blank sheet; they differ only in whether the plan
+    // being left behind is still there afterwards.
+    push({
+      id: `msg_${Date.now()}`,
+      role: 'assistant',
+      text:
+        `Before I open a blank sheet \u2014 do you want to keep \u201c${projectName(state.model)}\u201d? ` +
+        `It has ${points} point${points === 1 ? '' : 's'}` +
+        `${features > 0 ? ` and ${features} feature${features === 1 ? '' : 's'}` : ''} on it.\n\n` +
+        'Keeping it puts it in Projects, where you can reopen it any time. ' +
+        'Discarding deletes it, and that one I cannot undo.',
+      actions: [
+        {
+          id: `act_${Date.now()}_s`,
+          label: 'Save it, then start fresh',
+          intent: { kind: 'confirm-new-project', save: true },
+          tone: 'primary',
+        },
+        {
+          id: `act_${Date.now()}_d`,
+          label: 'Discard it and start fresh',
+          intent: { kind: 'confirm-new-project', save: false },
+        },
+        { id: `act_${Date.now()}_k`, label: 'Keep working on this', intent: { kind: 'none' } },
+      ],
+    });
+  }
+
+  /**
    * Data dropped into the conversation, from a paste or from a photograph.
    *
    * The reply is written here rather than by a planner because there is
@@ -135,6 +205,16 @@ export function AISheet({ onOpenPanel, onSelectTool }: AISheetProps) {
     void planner.reply(trimmed, ctx, [...history, { role: 'user' as const, text: trimmed }]).then(
       (message) => {
         setThinking(false);
+
+        // A request to start a new project is answered by the question it
+        // raises, not by a button that repeats the request back. The planner
+        // resolves the intent; what follows from it is decided here, because
+        // only this component knows what is currently on the drawing.
+        if (message.actions?.some((action) => action.intent.kind === 'new-project')) {
+          beginNewProject();
+          return;
+        }
+
         push(message);
       },
     );
@@ -232,43 +312,32 @@ export function AISheet({ onOpenPanel, onSelectTool }: AISheetProps) {
                 : 'Back to selecting.',
         });
         return;
-      case 'new-project': {
-        // Destructive, so it asks rather than acts. Undo reaches back past it
-        // either way, and saying so is what makes confirming reasonable.
-        const hasWork = state.model.points.length > 0 || state.model.siteFeatures.length > 0;
-        if (!hasWork) {
-          dispatch({ type: 'set-model', model: EMPTY_MODEL });
-          push({
-            id: `msg_${Date.now()}`,
-            role: 'assistant',
-            text: 'Done — this is a fresh project. Paste your points in, or tell me how you’d like to start.',
-          });
-          return;
+      case 'new-project':
+        beginNewProject();
+        return;
+      case 'confirm-new-project': {
+        const name = projectName(state.model);
+
+        if (intent.save) {
+          // Written now rather than left to the autosave debounce: the next
+          // thing that happens is this project being closed, and a save that
+          // was still pending when that happened would lose the last edits —
+          // which is the exact opposite of what pressing "save it" asked for.
+          saveProject(state.projectId, state.model);
+        } else {
+          deleteProject(state.projectId);
         }
+
+        startFreshProject();
         push({
           id: `msg_${Date.now()}`,
           role: 'assistant',
-          text: `This project has ${state.model.points.length} points and ${state.model.siteFeatures.length} features on it. Starting a new one replaces them — Undo brings them back if you change your mind.`,
-          actions: [
-            {
-              id: `act_${Date.now()}`,
-              label: 'Start a new project',
-              intent: { kind: 'confirm-new-project' },
-              tone: 'primary',
-            },
-            { id: `act_${Date.now()}_k`, label: 'Keep this one', intent: { kind: 'none' } },
-          ],
+          text: intent.save
+            ? `Saved “${name}” — you’ll find it under Projects. Here’s a blank sheet: paste your points in, photograph a note, or start drawing the boundary.`
+            : `Discarded “${name}”. Here’s a blank sheet: paste your points in, photograph a note, or start drawing the boundary.`,
         });
         return;
       }
-      case 'confirm-new-project':
-        dispatch({ type: 'set-model', model: EMPTY_MODEL });
-        push({
-          id: `msg_${Date.now()}`,
-          role: 'assistant',
-          text: 'Started a new project. Paste your points in, photograph a note, or ask me how to do anything in here.',
-        });
-        return;
       case 'show':
         dispatch({ type: 'highlight', id: intent.elementId });
         return;
@@ -366,6 +435,18 @@ export function AISheet({ onOpenPanel, onSelectTool }: AISheetProps) {
 }
 
 /** What to show in the conversation for a paste, rather than the whole table. */
+/**
+ * What to call the open plan when talking about it.
+ *
+ * The same fallback the library uses, so the assistant names a project the way
+ * the Projects list will — being told you saved "25 High Street" and then
+ * finding "Untitled plan" is a small betrayal of an otherwise fine feature.
+ */
+function projectName(model: { metadata: { siteAddress?: string } }): string {
+  const address = model.metadata.siteAddress?.trim();
+  return address && address.length > 0 ? address : 'Untitled plan';
+}
+
 function summarisePaste(text: string): string {
   const lines = text.split(/\r?\n/).filter((line) => line.trim().length > 0);
   const head = lines.slice(0, 2).join('\n');

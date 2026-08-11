@@ -40,15 +40,21 @@ export type Intent =
   | { readonly kind: 'tool'; readonly tool: 'select' | 'draw' | 'measure' }
   | { readonly kind: 'new-project' }
   /**
-   * The second half of starting a new project, after the user has been told
-   * what it replaces.
+   * The second half of starting a new project, after the user has said what
+   * should happen to the one they are leaving.
+   *
+   * `save` is the whole point of the question. True keeps the current plan in
+   * the library, where it can be reopened; false deletes it. There is no
+   * default, because guessing either way is a way of losing someone's work —
+   * guess `false` and it is gone, guess `true` and a library fills with
+   * abandoned drafts nobody asked to keep.
    *
    * Deliberately absent from the model's vocabulary (`ACTION_KINDS` in
-   * intent-schema.ts). `new-project` asks; this one acts. A model that could
-   * emit this could skip the question, and the confirmation is the only thing
-   * standing between a misread message and someone's survey.
+   * `api/_assistant-core.mjs`). `new-project` asks; this one acts. A model that
+   * could emit this could skip the question, and the question is the only
+   * thing standing between a misread message and someone's survey.
    */
-  | { readonly kind: 'confirm-new-project' }
+  | { readonly kind: 'confirm-new-project'; readonly save: boolean }
   | { readonly kind: 'none' };
 
 export type PanelName = 'data' | 'validation' | 'export' | 'layers' | 'project';
@@ -530,7 +536,7 @@ export const TASKS: readonly TaskGuide[] = [
     steps: [
       'Tap the site name at the top of the screen to open Project.',
       'Choose “Start a new project”, then confirm.',
-      'Your current work is replaced, but Undo still brings it back.',
+      'The plan you were on stays in Projects — starting another one does not delete it.',
     ],
     action: { label: 'Start a new project', intent: { kind: 'new-project' } },
   },

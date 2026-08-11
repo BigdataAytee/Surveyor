@@ -132,6 +132,11 @@ reports real progress rather than animating a timer.
   surveyor runs by hand. They are computed from the same corners the area and
   the dimensions come from, so a plan checked against a deed shows the deed's
   figures rather than ones measured off the drawing.
+- **Ask for a new project** and the assistant answers with the question that
+  actually matters: what should happen to the plan you are leaving. Keeping it
+  puts it in Projects; discarding deletes it. Either answer opens a blank
+  sheet. It asks only when there is something to lose — an empty plan just
+  becomes a new one.
 - **Renumber** renames every point in boundary order, rebuilding the ring
   references as it goes — a plan whose corners read PT4, PT1, PT7, PT2 round
   the boundary is one a reviewer has to work at.

@@ -364,7 +364,14 @@ export function Workspace() {
             />
           )}
 
-          {!pipeline.ok ? (
+          {/*
+            An empty project is not a broken one. The pipeline rightly declines
+            to draw nothing, but a red banner reading "there is nothing to draw
+            yet" on a blank sheet tells someone they have done something wrong
+            at the exact moment they have done the right thing — and the empty
+            state beside it is already saying the same thing, helpfully.
+          */}
+          {!pipeline.ok && !nothingYet ? (
             <FadeIn className="stage__banner">
               <div className="banner">
                 <span className="banner__text">{pipeline.message}</span>
@@ -869,15 +876,26 @@ function buildWorkflow(
 ): readonly Step[] {
   const done = (condition: boolean): Step['state'] => (condition ? 'complete' : 'pending');
 
+  // Nothing drawn yet is the start of the work, not a failure of it. Without
+  // this the first thing a new project shows is a red cross against Review,
+  // and the step it is failing is one the user has not reached.
+  const started = pointCount > 0;
+
   return [
     { ...WORKFLOW[0]!, state: done(pointCount >= 3) },
     { ...WORKFLOW[1]!, state: done(pointCount >= 3) },
-    { ...WORKFLOW[2]!, state: featureCount > 0 ? 'complete' : 'active' },
+    { ...WORKFLOW[2]!, state: featureCount > 0 ? 'complete' : started ? 'active' : 'pending' },
     { ...WORKFLOW[3]!, state: done(featureCount > 1) },
     { ...WORKFLOW[4]!, state: done(pointCount >= 3) },
     {
       ...WORKFLOW[5]!,
-      state: status === 'error' ? 'failed' : status === 'ready' ? 'complete' : 'active',
+      state: !started
+        ? 'pending'
+        : status === 'error'
+          ? 'failed'
+          : status === 'ready'
+            ? 'complete'
+            : 'active',
     },
     { ...WORKFLOW[6]!, state: status === 'ready' ? 'active' : 'pending' },
   ];
