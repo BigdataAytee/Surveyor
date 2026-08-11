@@ -318,3 +318,28 @@
   stroke-width: 4;
   stroke-linejoin: round;
 }
+
+/* --- Snapping ------------------------------------------------------------ */
+
+/* The marker is deliberately loud. A snap the surveyor cannot see is one they
+   will not trust, and one they do not trust they work around by zooming in and
+   clicking carefully — the behaviour snapping exists to remove. */
+.snap__mark {
+  fill: none;
+  stroke: var(--accent);
+  stroke-width: 2;
+  vector-effect: non-scaling-stroke;
+}
+
+.snap--grid .snap__mark {
+  stroke: var(--ink-tertiary);
+  stroke-dasharray: 2 2;
+}
+
+.canvas__band {
+  fill: var(--accent-soft);
+  stroke: var(--accent);
+  stroke-width: 1;
+  stroke-dasharray: 4 3;
+  vector-effect: non-scaling-stroke;
+}

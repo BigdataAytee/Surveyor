@@ -21,7 +21,14 @@ import {
 } from 'react';
 
 import type { Coordinates, PlacedLabel, SiteFeature } from '@surveyor/contracts';
-import { formatBearing, inverse, type Drawing, type DrawingElement } from '@surveyor/engine';
+import {
+  formatBearing,
+  inverse,
+  snap as findSnap,
+  type Drawing,
+  type DrawingElement,
+  type SnapResult,
+} from '@surveyor/engine';
 
 import {
   distanceToSegment,
@@ -35,6 +42,7 @@ import {
   type Size,
   type Viewport,
 } from './viewport.js';
+import { SNAP_RADIUS_PX, snapTargetsFrom, snapTolerance, targetsNear } from './snapping.js';
 import './canvas.css';
 
 export interface CanvasProps {
@@ -53,8 +61,16 @@ export interface CanvasProps {
   /** Unconfirmed AI proposals, drawn as previews (B.7). */
   readonly previews?: readonly SiteFeature[];
   readonly selectedId: string | null;
+  /** Everything selected, so a set can be drawn and dragged as one. */
+  readonly selectedIds?: readonly string[];
   readonly highlightId: string | null;
   readonly onSelect: (id: string | null) => void;
+  /** Shift-click and box select, which add to the selection rather than replace it. */
+  readonly onSelectMany?: (ids: readonly string[], additive: boolean) => void;
+  /** Object snapping, on by default — see canvas/snapping.ts for why it matters. */
+  readonly snapping?: boolean;
+  /** Grid spacing in survey units, for the grid snap. */
+  readonly gridSpacing?: number;
   readonly showLabels?: boolean;
   readonly showGrid?: boolean;
   /** The active tool (B.3). Select hit-tests; Draw adds corners; Measure probes. */
@@ -66,6 +82,17 @@ export interface CanvasProps {
 
 export type CanvasTool = 'select' | 'draw' | 'measure';
 
+/** What each snap is called, for the hint under the drawing. */
+const SNAP_LABEL: Readonly<Record<SnapResult['kind'], string>> = {
+  endpoint: 'a corner',
+  midpoint: 'the middle of a line',
+  centre: 'the centre',
+  intersection: 'a crossing',
+  perpendicular: 'a perpendicular',
+  nearest: 'the nearest line',
+  grid: 'the grid',
+};
+
 const TAP_SLOP_PX = 8;
 const HIT_TOLERANCE_PX = 14;
 
@@ -74,8 +101,12 @@ export function DrawingCanvas({
   labelsForScale,
   previews = [],
   selectedId,
+  selectedIds = [],
   highlightId,
   onSelect,
+  onSelectMany,
+  snapping = true,
+  gridSpacing,
   showLabels = true,
   showGrid = true,
   tool = 'select',
@@ -85,6 +116,19 @@ export function DrawingCanvas({
   // Measurement is ephemeral: it answers a question and is discarded, so it
   // never touches the Survey Data Model.
   const [measure, setMeasure] = useState<readonly Coordinates[]>([]);
+  /**
+   * Where the cursor would actually commit, and what it latched onto.
+   *
+   * Held in state rather than computed at click time so the indicator can be
+   * drawn: a snap the surveyor cannot see is a snap they cannot trust, and one
+   * they cannot trust they will work around by zooming in and clicking
+   * carefully, which is the behaviour snapping exists to remove.
+   */
+  const [snapHint, setSnapHint] = useState<SnapResult | null>(null);
+  /** The rubber band, in screen space, while a box select is being dragged. */
+  const [band, setBand] = useState<{ readonly from: ScreenPoint; readonly to: ScreenPoint } | null>(
+    null,
+  );
   const hostRef = useRef<HTMLDivElement>(null);
   const [size, setSize] = useState<Size>({ width: 0, height: 0 });
   const [viewport, setViewport] = useState<Viewport | null>(null);
@@ -134,7 +178,15 @@ export function DrawingCanvas({
     lastDistance: number | null;
     start: ScreenPoint;
     lastTapAt: number;
-  }>({ moved: false, lastDistance: null, start: { x: 0, y: 0 }, lastTapAt: 0 });
+    /** True while a drag that began on empty canvas is drawing a selection box. */
+    banding: boolean;
+  }>({
+    moved: false,
+    lastDistance: null,
+    start: { x: 0, y: 0 },
+    lastTapAt: 0,
+    banding: false,
+  });
 
   const localPoint = useCallback((event: React.PointerEvent): ScreenPoint => {
     const rect = hostRef.current?.getBoundingClientRect();
@@ -143,6 +195,32 @@ export function DrawingCanvas({
       y: event.clientY - (rect?.top ?? 0),
     };
   }, []);
+
+  const targets = useMemo(() => snapTargetsFrom(drawing), [drawing]);
+
+  /**
+   * Where a click at this screen point should actually land.
+   *
+   * Returns the snap when there is one and the raw world point when there is
+   * not, and reports which it was — the caller needs that distinction, because
+   * a corner placed on a snap shares a coordinate exactly and one placed on a
+   * click merely looks like it does.
+   */
+  const resolve = useCallback(
+    (point: ScreenPoint): { readonly at: Coordinates; readonly snapped: SnapResult | null } => {
+      if (!viewport) return { at: { easting: 0, northing: 0 }, snapped: null };
+      const world = toWorld(point, viewport, size);
+      if (!snapping) return { at: world, snapped: null };
+
+      const tolerance = snapTolerance(viewport.scale, SNAP_RADIUS_PX);
+      const hit = findSnap(world, targetsNear(targets, world, tolerance * 4), {
+        tolerance,
+        ...(gridSpacing ? { gridSpacing } : {}),
+      });
+      return { at: hit ? hit.at : world, snapped: hit };
+    },
+    [gridSpacing, size, snapping, targets, viewport],
+  );
 
   const onPointerDown = useCallback(
     (event: React.PointerEvent) => {
@@ -153,6 +231,13 @@ export function DrawingCanvas({
       if (pointers.current.size === 1) {
         gesture.current.moved = false;
         gesture.current.start = point;
+        // Box select begins on empty canvas; starting on an object would make
+        // dragging it impossible later.
+        gesture.current.banding =
+          tool === 'select' &&
+          onSelectMany !== undefined &&
+          viewport !== null &&
+          hitTest(point, drawing, viewport, size) === null;
       }
       gesture.current.lastDistance = null;
     },
@@ -188,12 +273,32 @@ export function DrawingCanvas({
 
       const dx = point.x - previous.x;
       const dy = point.y - previous.y;
-      if (Math.hypot(point.x - gesture.current.start.x, point.y - gesture.current.start.y) > TAP_SLOP_PX) {
-        gesture.current.moved = true;
+      const dragged =
+        Math.hypot(point.x - gesture.current.start.x, point.y - gesture.current.start.y) >
+        TAP_SLOP_PX;
+      if (dragged) gesture.current.moved = true;
+
+      // A drag that began on empty canvas in select mode is a selection box,
+      // not a pan. Panning stays available from anywhere else, and from two
+      // fingers, so nothing is lost.
+      if (gesture.current.banding) {
+        if (dragged) setBand({ from: gesture.current.start, to: point });
+        return;
       }
       setViewport((current) => (current ? panBy(current, dx, dy) : current));
     },
     [localPoint, size, viewport],
+  );
+
+  const onPointerHover = useCallback(
+    (event: React.PointerEvent) => {
+      // Touch has no hover, and showing a stale indicator after a tap is worse
+      // than showing none.
+      if (event.pointerType === 'touch' || pointers.current.size > 0) return;
+      if (tool === 'select') return;
+      setSnapHint(resolve(localPoint(event)).snapped);
+    },
+    [localPoint, resolve, tool],
   );
 
   const onPointerUp = useCallback(
@@ -204,15 +309,31 @@ export function DrawingCanvas({
 
       if (pointers.current.size > 0 || !viewport) return;
 
+      // A finished selection box takes everything it encloses.
+      if (gesture.current.banding) {
+        const rubber = band;
+        gesture.current.banding = false;
+        setBand(null);
+        if (rubber && gesture.current.moved) {
+          onSelectMany?.(
+            enclosedBy(rubber.from, rubber.to, drawing, viewport, size),
+            event.shiftKey,
+          );
+          return;
+        }
+      }
+
       if (gesture.current.moved) return;
 
-      const world = toWorld(point, viewport, size);
+      const { at: world, snapped } = resolve(point);
+      setSnapHint(null);
 
       if (tool === 'draw') {
         onDrawPoint?.(world);
         return;
       }
       if (tool === 'measure') {
+        void snapped;
         // Two taps make a measurement; a third starts a fresh one.
         setMeasure((current) => (current.length >= 2 ? [world] : [...current, world]));
         return;
@@ -230,9 +351,14 @@ export function DrawingCanvas({
       }
       gesture.current.lastTapAt = now;
 
-      onSelect(hitTest(point, drawing, viewport, size));
+      const hit = hitTest(point, drawing, viewport, size);
+      if (event.shiftKey && hit && onSelectMany) {
+        onSelectMany([hit], true);
+        return;
+      }
+      onSelect(hit);
     },
-    [drawing, localPoint, onDrawPoint, onSelect, size, tool, viewport],
+    [band, drawing, localPoint, onDrawPoint, onSelect, onSelectMany, resolve, size, tool, viewport],
   );
 
   // Switching tools abandons a half-finished measurement rather than leaving
@@ -291,9 +417,13 @@ export function DrawingCanvas({
         role="img"
         aria-label="Site plan drawing"
         onPointerDown={onPointerDown}
-        onPointerMove={onPointerMove}
+        onPointerMove={(event) => {
+          onPointerMove(event);
+          onPointerHover(event);
+        }}
         onPointerUp={onPointerUp}
         onPointerCancel={onPointerUp}
+        onPointerLeave={() => setSnapHint(null)}
         onWheel={onWheel}
       >
         {grid ? (
@@ -315,7 +445,7 @@ export function DrawingCanvas({
                     key={element.id}
                     element={element}
                     project={project}
-                    selected={element.id === selectedId}
+                    selected={element.id === selectedId || selectedIds.includes(element.id)}
                     highlighted={element.id === highlightId}
                   />
                 ))}
@@ -340,12 +470,58 @@ export function DrawingCanvas({
         {ready && measure.length > 0 ? (
           <Measurement points={measure} project={project} unit={unit} />
         ) : null}
+
+        {/*
+          The snap marker. Shown as a square on an exact feature of the
+          geometry and a circle on a merely-nearest point, so the surveyor can
+          tell at a glance whether the click will share a coordinate or only
+          look like it does.
+        */}
+        {ready && snapHint ? (
+          <g className={`snap snap--${snapHint.kind}`} aria-hidden="true">
+            {snapHint.kind === 'nearest' || snapHint.kind === 'grid' ? (
+              <circle
+                cx={project(snapHint.at).x}
+                cy={project(snapHint.at).y}
+                r={6}
+                className="snap__mark"
+              />
+            ) : (
+              <rect
+                x={project(snapHint.at).x - 6}
+                y={project(snapHint.at).y - 6}
+                width={12}
+                height={12}
+                className="snap__mark"
+              />
+            )}
+          </g>
+        ) : null}
+
+        {band ? (
+          <rect
+            className="canvas__band"
+            x={Math.min(band.from.x, band.to.x)}
+            y={Math.min(band.from.y, band.to.y)}
+            width={Math.abs(band.to.x - band.from.x)}
+            height={Math.abs(band.to.y - band.from.y)}
+            aria-hidden="true"
+          />
+        ) : null}
       </svg>
+
+      {selectedIds.length > 1 ? (
+        <div className="canvas__hint canvas__hint--count" role="status">
+          {selectedIds.length} selected
+        </div>
+      ) : null}
 
       {tool !== 'select' ? (
         <div className="canvas__hint" role="status">
           {tool === 'draw'
-            ? 'Tap to place a corner'
+            ? snapHint
+              ? `Snapped to ${SNAP_LABEL[snapHint.kind]}`
+              : 'Tap to place a corner'
             : measure.length === 0
               ? 'Tap the first point'
               : measure.length === 1
@@ -628,6 +804,42 @@ function buildGrid(
   }
 
   return { vertical, horizontal };
+}
+
+/**
+ * Everything a selection box encloses.
+ *
+ * Fully enclosed, not merely touched. AutoCAD offers both — a window takes
+ * what is inside, a crossing takes what it touches — and the window is the one
+ * that behaves predictably on a drawing where a boundary runs the whole width
+ * of the screen. A crossing selection there would take the parcel every time
+ * the box was dragged anywhere, which is not a selection.
+ */
+function enclosedBy(
+  from: ScreenPoint,
+  to: ScreenPoint,
+  drawing: Drawing,
+  viewport: Viewport,
+  size: Size,
+): readonly string[] {
+  const left = Math.min(from.x, to.x);
+  const right = Math.max(from.x, to.x);
+  const top = Math.min(from.y, to.y);
+  const bottom = Math.max(from.y, to.y);
+
+  const inside = (at: Coordinates): boolean => {
+    const screen = toScreen(at, viewport, size);
+    return screen.x >= left && screen.x <= right && screen.y >= top && screen.y <= bottom;
+  };
+
+  const ids: string[] = [];
+  for (const layer of drawing.layers) {
+    for (const element of layer.elements) {
+      const points = element.kind === 'symbol' ? [element.at] : element.points;
+      if (points.length > 0 && points.every(inside)) ids.push(element.id);
+    }
+  }
+  return ids;
 }
 
 /**

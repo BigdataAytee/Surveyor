@@ -15,7 +15,7 @@ No AI-authored coordinate or survey value reaches a finished plan. The UI's job 
 | [`docs/ARCHITECTURE.md`](./docs/ARCHITECTURE.md) | Full system architecture — Part A (data & geometry), Part B (experience layer), Part C (cross-cutting contract) |
 | [`docs/contracts/LABEL_SPECIFICATION.md`](./docs/contracts/LABEL_SPECIFICATION.md) | The AI ↔ Label Placement Engine contract, formalized |
 | [`packages/contracts`](./packages/contracts) | Shared types and structural guards for the Part A ↔ Part B boundary |
-| [`packages/engine`](./packages/engine) | The deterministic engines: CRS, COGO, validation, drawing, labelling, composition, export |
+| [`packages/engine`](./packages/engine) | The deterministic engines: CRS, COGO, editing, snapping, validation, drawing, labelling, composition, export |
 | [`apps/web`](./apps/web) | The mobile-first workspace: canvas, assistant, data entry, review, export |
 
 ## Getting started
@@ -70,6 +70,18 @@ reports real progress rather than animating a timer.
   a new corner is inserted into the edge it sits nearest, so the shape does not
   fold over itself. Measure reports bearing and distance between two taps,
   through the same COGO call the plan's dimensions use.
+- **Object snapping** latches a click onto a corner, a midpoint, a crossing, a
+  perpendicular or the grid, and shows which. A snapped corner shares the other
+  object's coordinate exactly — not to within a pixel — which is the difference
+  between a drawing that computes correctly and one that only looks right.
+- **Editing** works on a selection: tap, shift-click or drag a box, then Edit.
+  Move, copy, rotate, scale, mirror and offset all take a typed value, because
+  a surveyor moving a building 3 m north means 3.000 m and no pointer can say
+  that. An offset produces a real setback line — mitred corners, exactly the
+  distance from the boundary anywhere you measure.
+- **Keyboard**: `V`/`D`/`M` pick a tool, `E` opens Edit, `F` toggles snapping,
+  `Delete` removes the selection, `Escape` clears it, `Ctrl+Z` / `Ctrl+Shift+Z`
+  undo and redo.
 - **Import** accepts a pasted table or an uploaded `.csv`/`.txt`. The extractor
   finds the table inside whatever else came with it — a site name, a date, a
   rule under the headings, a total at the foot — works out the delimiter, the
@@ -168,14 +180,14 @@ handles it. The schema is the seatbelt; the validator is the crumple zone.
 ## Testing
 
 ```bash
-npm test                                    # 159 tests across contracts, engine and web
+npm test                                    # 200 tests across contracts, engine and web
 npm run smoke --workspace @surveyor/web     # browser flows (needs a preview server)
 ```
 
 The smoke test drives the trust loop, the export gate, the drawing and measuring
-tools, import, a messy paste, pasting into the assistant, starting a new
-project, asking the assistant for help, traverse entry and persistence in a real
-browser, and fails on console errors, on-screen label collisions, or horizontal
+tools, CAD editing, import, a messy paste, pasting into the assistant, starting
+a new project, asking the assistant for help, traverse entry and persistence in
+a real browser, and fails on console errors, on-screen label collisions, or horizontal
 overflow at any breakpoint.
 
 The web suites treat model output as hostile input — off-vocabulary actions,

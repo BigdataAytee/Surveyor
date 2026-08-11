@@ -547,6 +547,84 @@ if (CLASSIFIER_ONLY) {
   await page.close();
 }
 
+// --- CAD editing ------------------------------------------------------------
+
+{
+  // The claim this whole layer makes is that a drawing is geometry rather
+  // than a picture, so the check is the coordinate, not the pixels.
+  const page = await open('cad', DESKTOP);
+
+  async function eastingOfPT1() {
+    await page.getByRole('button', { name: 'Data' }).click();
+    await page.waitForTimeout(400);
+    const value = await page.getByLabel(/PT1 easting/).inputValue();
+    await page.getByRole('button', { name: 'Done' }).click();
+    await page.waitForTimeout(300);
+    return Number(value);
+  }
+
+  const before = await eastingOfPT1();
+
+  const points = await page.locator('.element--point').all();
+  expect(points.length >= 3, 'cad: no survey points to edit');
+
+  const first = await points[0].boundingBox();
+  await page.mouse.click(first.x + first.width / 2, first.y + first.height / 2);
+  await page.waitForTimeout(300);
+
+  // Shift-click builds a set; every editing operation works on one.
+  const second = await points[1].boundingBox();
+  await page.keyboard.down('Shift');
+  await page.mouse.click(second.x + second.width / 2, second.y + second.height / 2);
+  await page.keyboard.up('Shift');
+  await page.waitForTimeout(300);
+  expect(
+    /2 objects/.test((await page.locator('.contextbar').innerText()) ?? ''),
+    'cad: shift-click did not extend the selection',
+  );
+
+  await page.getByRole('button', { name: 'Edit', exact: true }).click();
+  await page.waitForTimeout(400);
+  await page.getByLabel('Move bearing in degrees').fill('90');
+  await page.getByLabel(/Move distance/).fill('5');
+  await page.getByRole('button', { name: 'Move', exact: true }).click();
+  await page.waitForTimeout(700);
+
+  // Exactly five metres. "About five" is the defect this replaces.
+  const moved = await eastingOfPT1();
+  expect(
+    Math.abs(moved - before - 5) < 1e-9,
+    `cad: a 5 m move moved ${(moved - before).toFixed(6)} m`,
+  );
+  await shot(page, 'cad-moved');
+
+  await page.keyboard.press('Control+z');
+  await page.waitForTimeout(600);
+  expect(
+    Math.abs((await eastingOfPT1()) - before) < 1e-9,
+    'cad: undo did not restore the coordinate exactly',
+  );
+
+  // An offset is calculated from the boundary, so it is a real setback line
+  // rather than a hand-drawn approximation of one.
+  await page.mouse.click(first.x + first.width / 2, first.y + first.height / 2);
+  await page.waitForTimeout(300);
+  await page.getByRole('button', { name: 'Edit', exact: true }).click();
+  await page.waitForTimeout(300);
+  await page.getByRole('tab', { name: 'Offset' }).click();
+  await page.waitForTimeout(300);
+  await page.getByLabel(/Setback distance/).fill('3');
+  await page.getByRole('button', { name: 'Inside' }).click();
+  await page.waitForTimeout(700);
+
+  expect(
+    /Setback 3/.test((await page.textContent('body')) ?? ''),
+    'cad: the setback line was not created',
+  );
+  await shot(page, 'cad-offset');
+  await page.close();
+}
+
 // --- Traverse entry ---------------------------------------------------------
 
 {

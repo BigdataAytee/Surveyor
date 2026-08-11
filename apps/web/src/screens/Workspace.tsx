@@ -13,6 +13,7 @@ import { contextFor, placeLabels, UNIT_ABBREVIATION } from '@surveyor/engine';
 
 import { DrawingCanvas, type CanvasTool } from '../canvas/DrawingCanvas.js';
 import { ProjectSheet } from '../panels/ProjectSheet.js';
+import { ToolsSheet } from '../panels/ToolsSheet.js';
 import { PropertiesSheet } from '../panels/PropertiesSheet.js';
 import { Segmented } from '../ui/primitives.js';
 import { AISheet } from '../ai/AISheet.js';
@@ -33,7 +34,16 @@ import { FadeIn } from '../ui/motion.js';
 import { useProject } from '../state/store.js';
 import './workspace.css';
 
-type Panel = 'ai' | 'data' | 'validation' | 'export' | 'layers' | 'properties' | 'project' | null;
+type Panel =
+  | 'ai'
+  | 'data'
+  | 'validation'
+  | 'export'
+  | 'layers'
+  | 'properties'
+  | 'project'
+  | 'tools'
+  | null;
 
 /** Cap height the canvas stylesheet draws labels at, and its paper equivalent. */
 const CANVAS_TEXT_PX = 11;
@@ -57,6 +67,7 @@ export function Workspace() {
   const [showGrid, setShowGrid] = useState(true);
   const [theme, setTheme] = useState<'light' | 'dark'>('light');
   const [tool, setTool] = useState<CanvasTool>('select');
+  const [snapping, setSnapping] = useState(true);
 
   useEffect(() => {
     document.documentElement.dataset.theme = theme;
@@ -66,18 +77,59 @@ export function Workspace() {
   // through the toolbar, so nothing is keyboard-only.
   useEffect(() => {
     const onKey = (event: KeyboardEvent) => {
-      if (!(event.metaKey || event.ctrlKey)) return;
-      if (event.key === 'z' && !event.shiftKey) {
-        event.preventDefault();
-        dispatch({ type: 'undo' });
-      } else if ((event.key === 'z' && event.shiftKey) || event.key === 'y') {
-        event.preventDefault();
-        dispatch({ type: 'redo' });
+      // Typing in a field is not a shortcut.
+      const target = event.target as HTMLElement | null;
+      if (target && /^(INPUT|TEXTAREA|SELECT)$/.test(target.tagName)) return;
+
+      if (event.metaKey || event.ctrlKey) {
+        if (event.key === 'z' && !event.shiftKey) {
+          event.preventDefault();
+          dispatch({ type: 'undo' });
+        } else if ((event.key === 'z' && event.shiftKey) || event.key === 'y') {
+          event.preventDefault();
+          dispatch({ type: 'redo' });
+        }
+        return;
+      }
+
+      // The single-key shortcuts a drafter's left hand expects. Deliberately
+      // few: every one of them has to be unambiguous, because a stray key
+      // press over a drawing should never change the survey.
+      switch (event.key) {
+        case 'Escape':
+          setPanel(null);
+          setTool('select');
+          dispatch({ type: 'select', id: null });
+          return;
+        case 'Delete':
+        case 'Backspace':
+          if (state.selectedIds.length > 0) {
+            event.preventDefault();
+            dispatch({ type: 'delete-selection' });
+          }
+          return;
+        case 'm':
+          setTool('measure');
+          return;
+        case 'd':
+          setTool('draw');
+          return;
+        case 'v':
+          setTool('select');
+          return;
+        case 'e':
+          setPanel('tools');
+          return;
+        case 'f':
+          setSnapping((on) => !on);
+          return;
+        default:
+          return;
       }
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, [dispatch]);
+  }, [dispatch, state.selectedIds.length]);
 
   const status = pipeline.ok ? pipeline.validation.status : 'error';
 
@@ -233,6 +285,16 @@ export function Workspace() {
               labelsForScale={labelsForScale}
               previews={previews}
               selectedId={state.selectedId}
+              selectedIds={state.selectedIds}
+              onSelectMany={(ids, additive) =>
+                dispatch(
+                  additive
+                    ? { type: 'select-many', ids: [...state.selectedIds, ...ids] }
+                    : { type: 'select-many', ids },
+                )
+              }
+              snapping={snapping}
+              {...(showGrid ? { gridSpacing: 5 } : {})}
               highlightId={state.highlightId}
               showLabels={showLabels}
               showGrid={showGrid}
@@ -263,6 +325,8 @@ export function Workspace() {
 
       <ContextualToolbar
         selectedId={state.selectedId}
+        selectedIds={state.selectedIds}
+        onOpenTools={() => openPanel('tools')}
         onClear={() => dispatch({ type: 'select', id: null })}
         onOpenProperties={() => openPanel('properties')}
       />
@@ -350,7 +414,17 @@ export function Workspace() {
         <div className="layers">
           <Toggle label="Labels" checked={showLabels} onChange={setShowLabels} />
           <Toggle label="Grid" checked={showGrid} onChange={setShowGrid} />
+          <Toggle label="Snapping" checked={snapping} onChange={setSnapping} />
         </div>
+      </BottomSheet>
+
+      <BottomSheet
+        open={panel === 'tools'}
+        onClose={() => setPanel(null)}
+        title="Edit"
+        subtitle="Move, rotate, scale, mirror and offset — by exact amounts"
+      >
+        <ToolsSheet onClose={() => setPanel(null)} />
       </BottomSheet>
 
       <BottomSheet
@@ -416,17 +490,23 @@ function TabButton({
  */
 function ContextualToolbar({
   selectedId,
+  selectedIds,
+  onOpenTools,
   onClear,
   onOpenProperties,
 }: {
   readonly selectedId: string | null;
+  readonly selectedIds: readonly string[];
+  readonly onOpenTools: () => void;
   readonly onClear: () => void;
   readonly onOpenProperties: () => void;
 }) {
   const { pipeline, dispatch } = useProject();
-  if (!selectedId) return null;
+  if (selectedIds.length === 0) return null;
 
-  const element = selectedElement(pipeline, selectedId);
+  // A multi-selection has no single element to describe, but it is exactly
+  // when the editing tools matter most — so the bar appears either way.
+  const element = selectedId ? selectedElement(pipeline, selectedId) : undefined;
   const kind =
     element?.subject.kind === 'segment'
       ? 'Boundary line'
@@ -434,19 +514,26 @@ function ContextualToolbar({
         ? 'Survey point'
         : element?.subject.kind === 'feature'
           ? 'Feature'
-          : 'Selection';
+          : `${selectedIds.length} objects`;
 
   return (
     <FadeIn className="contextbar">
       <div className="contextbar__inner">
         <span className="contextbar__title">
           {kind}
-          <span className="contextbar__id numeric">{selectedId}</span>
+          {selectedId ? (
+            <span className="contextbar__id numeric">{selectedId}</span>
+          ) : null}
         </span>
         <div className="contextbar__actions">
-          <Button size="sm" onClick={onOpenProperties}>
-            Properties
+          <Button size="sm" variant="primary" onClick={onOpenTools}>
+            Edit
           </Button>
+          {selectedId ? (
+            <Button size="sm" onClick={onOpenProperties}>
+              Properties
+            </Button>
+          ) : null}
           {/* Only offer deletion for things that can be deleted on their own. */}
           {element?.subject.kind === 'feature' ? (
             <Button

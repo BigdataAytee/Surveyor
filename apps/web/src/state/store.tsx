@@ -33,9 +33,15 @@ import type {
 import { confirm } from '@surveyor/contracts';
 import {
   inverse,
+  mirror,
+  mirrorRing,
   ringFromPointOrder,
+  rotate,
   runPipeline,
+  scale,
+  translate,
   type PipelineResult,
+  type Vector,
 } from '@surveyor/engine';
 
 import { loadModel, saveModel } from './persistence.js';
@@ -72,6 +78,15 @@ export type Suggestion =
 export interface ProjectState {
   readonly model: SurveyDataModel;
   readonly suggestions: readonly Suggestion[];
+  /**
+   * Everything selected, in the order it was picked.
+   *
+   * A list rather than one id because every CAD operation worth having works
+   * on a set: move three corners, mirror a building and its driveway
+   * together, delete a run of fence. `selectedId` remains as the single-object
+   * case the properties panel needs, derived from this so the two cannot drift.
+   */
+  readonly selectedIds: readonly string[];
   readonly selectedId: string | null;
   readonly highlightId: string | null;
   readonly past: readonly SurveyDataModel[];
@@ -80,9 +95,24 @@ export interface ProjectState {
 
 export type Action =
   | { type: 'select'; id: string | null }
+  /** Add to or remove from the selection — shift-click and box select. */
+  | { type: 'select-toggle'; id: string }
+  | { type: 'select-many'; ids: readonly string[] }
+  /**
+   * Move, rotate, scale or mirror everything selected.
+   *
+   * One action rather than four because they differ only in which engine
+   * function computes the new coordinates, and routing them together keeps the
+   * "which objects does this touch" logic in one place instead of four.
+   */
+  | { type: 'transform'; transform: Transform; ids?: readonly string[] }
+  | { type: 'delete-selection' }
+  /** Copy everything selected by a displacement, leaving the original. */
+  | { type: 'duplicate-selection'; by: Vector }
   | { type: 'highlight'; id: string | null }
   | { type: 'add-point'; point: SurveyPoint }
   | { type: 'add-boundary-point'; at: Coordinates }
+  | { type: 'add-feature'; feature: SiteFeature }
   | { type: 'update-feature'; id: string; feature: SiteFeature }
   | { type: 'remove-feature'; id: string }
   | { type: 'update-point'; id: string; point: SurveyPoint }
@@ -105,7 +135,109 @@ export type Action =
   | { type: 'undo' }
   | { type: 'redo' };
 
+/**
+ * What a CAD transform is, as data.
+ *
+ * Expressed as intent — "rotate 30° about here" — rather than as a matrix,
+ * because the intent is what the surveyor typed and what the status bar has to
+ * show. It is also what makes the operation replayable: a matrix that has been
+ * multiplied out cannot tell you afterwards that it was a 30° rotation.
+ */
+export type Transform =
+  | { readonly kind: 'move'; readonly by: Vector }
+  | { readonly kind: 'rotate'; readonly about: Coordinates; readonly degrees: number }
+  | { readonly kind: 'scale'; readonly about: Coordinates; readonly factor: number }
+  | { readonly kind: 'mirror'; readonly a: Coordinates; readonly b: Coordinates };
+
 const HISTORY_LIMIT = 40;
+
+/**
+ * Apply a transform to a list of vertices.
+ *
+ * Every case delegates to the engine. Nothing here computes a coordinate: the
+ * store decides *what* is being transformed, and `@surveyor/engine` decides
+ * where it lands — the same division that keeps the canvas from being able to
+ * produce geometry that looks right and computes wrong.
+ */
+function applyTransform(
+  vertices: readonly Coordinates[],
+  transform: Transform,
+  closed: boolean,
+): readonly Coordinates[] {
+  switch (transform.kind) {
+    case 'move':
+      return translate(vertices, transform.by);
+    case 'rotate':
+      return rotate(vertices, transform.about, transform.degrees);
+    case 'scale':
+      return scale(vertices, transform.about, transform.factor);
+    case 'mirror':
+      // A closed shape keeps its winding, so its area stays positive and
+      // "outside" keeps meaning outside.
+      return closed
+        ? mirrorRing(vertices, transform.a, transform.b)
+        : mirror(vertices, transform.a, transform.b);
+  }
+}
+
+/**
+ * Transform whichever survey objects the ids name.
+ *
+ * Points and features are handled together because a selection routinely spans
+ * both — mirroring a house and the two boundary corners it was measured from
+ * has to move all four, or the relationship the surveyor cares about is lost.
+ *
+ * Selecting a ring selects its corners: a ring has no geometry of its own,
+ * only an order over points, so moving "the boundary" means moving them.
+ */
+function transformModel(
+  model: SurveyDataModel,
+  ids: readonly string[],
+  transform: Transform,
+): SurveyDataModel {
+  const targets = new Set(ids);
+
+  // A selected ring stands for every corner in it.
+  for (const ring of model.boundary) {
+    if (!targets.has(ring.id)) continue;
+    for (const segment of ring.segments) targets.add(segment.from);
+  }
+
+  const points = model.points.map((point) =>
+    targets.has(point.id)
+      ? {
+          ...point,
+          coordinates: applyTransform([point.coordinates], transform, false)[0]!,
+          // Moving a measured point makes its position the user's, not the
+          // instrument's. Saying so is the whole provenance rule.
+          provenance: { ...point.provenance, source: 'user-confirmed' as const },
+        }
+      : point,
+  );
+
+  const siteFeatures = model.siteFeatures.map((feature) => {
+    if (!targets.has(feature.id)) return feature;
+    const geometry = feature.geometry;
+
+    if (geometry.kind === 'point') {
+      return {
+        ...feature,
+        geometry: { ...geometry, at: applyTransform([geometry.at], transform, false)[0]! },
+        provenance: { ...feature.provenance, source: 'user-confirmed' as const },
+      };
+    }
+    return {
+      ...feature,
+      geometry: {
+        ...geometry,
+        vertices: applyTransform(geometry.vertices, transform, geometry.kind === 'polygon'),
+      },
+      provenance: { ...feature.provenance, source: 'user-confirmed' as const },
+    };
+  });
+
+  return { ...model, points, siteFeatures };
+}
 
 /** Next free PTn, so drawing after a deletion does not reuse a name. */
 function nextPointId(existing: readonly SurveyPoint[]): string {
@@ -161,6 +293,58 @@ function ringOrder(
   return order;
 }
 
+/**
+ * Set the selection, keeping `selectedId` in step.
+ *
+ * `selectedId` is the single-object case — what the properties panel edits —
+ * and is null whenever the selection is empty or holds more than one thing.
+ * Deriving it here rather than storing it separately means the two cannot
+ * disagree about what is selected.
+ */
+function selectionOf(state: ProjectState, ids: readonly string[]): ProjectState {
+  const unique = [...new Set(ids)];
+  return {
+    ...state,
+    selectedIds: unique,
+    selectedId: unique.length === 1 ? unique[0]! : null,
+  };
+}
+
+/**
+ * Copies of the selected objects, displaced.
+ *
+ * Only features are copied. A boundary corner has no independent existence —
+ * it is a member of a ring — so duplicating one would put two corners in the
+ * same boundary at slightly different places, which is not a shape anyone
+ * meant to draw. Copying the parcel itself is a different operation and is not
+ * this one.
+ */
+function copyOf(
+  model: SurveyDataModel,
+  ids: readonly string[],
+  by: Vector,
+): readonly SiteFeature[] {
+  const wanted = new Set(ids);
+  const stamp = Date.now().toString(36);
+
+  return model.siteFeatures
+    .filter((feature) => wanted.has(feature.id))
+    .map((feature, index) => {
+      const geometry =
+        feature.geometry.kind === 'point'
+          ? { ...feature.geometry, at: translate([feature.geometry.at], by)[0]! }
+          : { ...feature.geometry, vertices: translate(feature.geometry.vertices, by) };
+
+      return {
+        ...feature,
+        id: `${feature.id}_copy_${stamp}_${index}`,
+        geometry,
+        // A copy is something the user made, whatever the original was.
+        provenance: { source: 'user-confirmed' as const },
+      };
+    });
+}
+
 /** Records the previous model so the change can be undone. */
 function commit(state: ProjectState, model: SurveyDataModel): ProjectState {
   return {
@@ -174,7 +358,63 @@ function commit(state: ProjectState, model: SurveyDataModel): ProjectState {
 export function reducer(state: ProjectState, action: Action): ProjectState {
   switch (action.type) {
     case 'select':
-      return { ...state, selectedId: action.id };
+      return selectionOf(state, action.id === null ? [] : [action.id]);
+
+    case 'select-toggle':
+      return selectionOf(
+        state,
+        state.selectedIds.includes(action.id)
+          ? state.selectedIds.filter((id) => id !== action.id)
+          : [...state.selectedIds, action.id],
+      );
+
+    case 'select-many':
+      return selectionOf(state, action.ids);
+
+    case 'transform': {
+      const ids = action.ids ?? state.selectedIds;
+      if (ids.length === 0) return state;
+      return commit(state, transformModel(state.model, ids, action.transform));
+    }
+
+    case 'duplicate-selection': {
+      if (state.selectedIds.length === 0) return state;
+
+      // Copies are features rather than boundary corners: duplicating a corner
+      // of a parcel would put two corners in one ring, which is not a shape.
+      const copies = copyOf(state.model, state.selectedIds, action.by);
+      if (copies.length === 0) return state;
+
+      return selectionOf(
+        commit(state, {
+          ...state.model,
+          siteFeatures: [...state.model.siteFeatures, ...copies],
+        }),
+        copies.map((feature) => feature.id),
+      );
+    }
+
+    case 'delete-selection': {
+      if (state.selectedIds.length === 0) return state;
+      const gone = new Set(state.selectedIds);
+
+      const points = state.model.points.filter((point) => !gone.has(point.id));
+      const siteFeatures = state.model.siteFeatures.filter(
+        (feature) => !gone.has(feature.id),
+      );
+
+      // The ring is rebuilt from what survives rather than having segments
+      // removed: dropping a segment leaves the two either side pointing at a
+      // corner that is not there, which reads downstream as a broken boundary.
+      const remaining = ringOrder(state.model, points).filter((id) => !gone.has(id));
+      const boundary =
+        remaining.length >= 3 ? [ringFromPointOrder('ring_1', remaining)] : [];
+
+      return selectionOf(
+        commit(state, { ...state.model, points, boundary, siteFeatures }),
+        [],
+      );
+    }
 
     case 'highlight':
       return { ...state, highlightId: action.id };
@@ -207,6 +447,15 @@ export function reducer(state: ProjectState, action: Action): ProjectState {
         boundary: order.length >= 3 ? [ringFromPointOrder('ring_1', order)] : [],
       });
     }
+
+    case 'add-feature':
+      return selectionOf(
+        commit(state, {
+          ...state.model,
+          siteFeatures: [...state.model.siteFeatures, action.feature],
+        }),
+        [action.feature.id],
+      );
 
     case 'update-feature':
       return commit(state, {
@@ -359,6 +608,7 @@ export function initialState(): ProjectState {
   return {
     model: loadModel() ?? SAMPLE_PROJECT,
     suggestions: [],
+    selectedIds: [],
     selectedId: null,
     highlightId: null,
     past: [],
