@@ -126,6 +126,16 @@ export type Action =
   | { type: 'remove-feature'; id: string }
   | { type: 'update-point'; id: string; point: SurveyPoint }
   | { type: 'remove-point'; id: string }
+  /**
+   * Renumber every point in boundary order, PT1 upward.
+   *
+   * Points entered out of sequence, or added after a deletion, end up named in
+   * an order that has nothing to do with the shape — and a plan whose corners
+   * read PT4, PT1, PT7, PT2 round the boundary is one a reviewer has to work
+   * at. Renaming rebuilds every reference, because a rename that left the ring
+   * pointing at the old names would silently unmake the boundary.
+   */
+  | { type: 'renumber-points'; prefix?: string }
   | { type: 'set-model'; model: SurveyDataModel }
   /**
    * Switch to another saved project, or start a fresh one.
@@ -562,6 +572,32 @@ export function reducer(state: ProjectState, action: Action): ProjectState {
           p.id === action.id ? action.point : p,
         ),
       });
+
+    case 'renumber-points': {
+      const prefix = action.prefix ?? 'PT';
+      const order = ringOrder(state.model, state.model.points);
+      // Anything not in the ring keeps its place after the corners, so a
+      // detail point is not silently promoted to a boundary corner.
+      const sequence = [
+        ...order,
+        ...state.model.points.map((point) => point.id).filter((id) => !order.includes(id)),
+      ];
+
+      const renamed = new Map(sequence.map((id, index) => [id, `${prefix}${index + 1}`]));
+      const byId = new Map(state.model.points.map((point) => [point.id, point]));
+
+      const points = sequence.flatMap((id) => {
+        const point = byId.get(id);
+        return point ? [{ ...point, id: renamed.get(id)! }] : [];
+      });
+
+      const boundary =
+        order.length >= 3
+          ? [ringFromPointOrder('ring_1', order.map((id) => renamed.get(id)!))]
+          : state.model.boundary;
+
+      return selectionOf(commit(state, { ...state.model, points, boundary }), []);
+    }
 
     case 'remove-point': {
       // The ring is rebuilt from the corners that remain, in order. Simply

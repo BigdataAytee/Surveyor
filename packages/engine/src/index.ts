@@ -20,6 +20,7 @@ export * from './compose/composer.js';
 export * from './export/svg.js';
 export * from './export/dxf.js';
 export * from './export/pdf.js';
+export * from './import/dxf.js';
 export * from './edit/transform.js';
 export * from './edit/intersect.js';
 export * from './edit/modify.js';

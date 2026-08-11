@@ -16,6 +16,7 @@ import type { Coordinates, SiteFeature } from '@surveyor/contracts';
 
 import { distanceBetween, internalAngles, polygonArea, signedArea } from '../src/cogo.js';
 import { buildDrawing } from '../src/drawing.js';
+import { dxfToSurvey, looksLikeDxf, parseDxf } from '../src/import/dxf.js';
 import {
   displacement,
   mirror,
@@ -606,4 +607,105 @@ test('winding does not change the angles, because it does not change the ground'
 test('a repeated closing vertex does not produce a zero-length leg', () => {
   const closed = [...RECT, RECT[0]!];
   assert.equal(internalAngles(closed).length, 4);
+});
+
+// ---------------------------------------------------------------------------
+// DXF import
+// ---------------------------------------------------------------------------
+
+test('a DXF this app exported can be read back', () => {
+  // The round trip is the point: an export nothing can read is a one-way door,
+  // and a surveyor who sends a drawing out cannot take corrections back.
+  const dxf = [
+    '0', 'SECTION', '2', 'ENTITIES',
+    '0', 'LWPOLYLINE', '8', 'BOUNDARY', '90', '4', '70', '1',
+    '10', '534800.0', '20', '182900.0',
+    '10', '534830.0', '20', '182900.0',
+    '10', '534830.0', '20', '182920.0',
+    '10', '534800.0', '20', '182920.0',
+    '0', 'POINT', '8', 'POINTS', '10', '534810.0', '20', '182910.0', '30', '45.2',
+    '0', 'CIRCLE', '8', 'TREES', '10', '534820.0', '20', '182915.0', '40', '3.0',
+    '0', 'ENDSEC', '0', 'EOF',
+  ].join('\n');
+
+  const document = parseDxf(dxf);
+  assert.equal(document.problems.length, 0);
+  assert.equal(document.entities.length, 3);
+
+  const survey = dxfToSurvey(document);
+  assert.equal(survey.points.length, 1);
+  nearPoint(survey.points[0]!.coordinates, 534810, 182910);
+  assert.equal(survey.points[0]!.coordinates.elevation, 45.2);
+
+  // The closed polyline is offered as the boundary candidate.
+  assert.equal(survey.rings.length, 1);
+  assert.equal(survey.rings[0]!.length, 4);
+  near(polygonArea(survey.rings[0]!), 600, 1e-6);
+});
+
+test('a circle keeps its radius through the import', () => {
+  const dxf = [
+    '0', 'SECTION', '2', 'ENTITIES',
+    '0', 'CIRCLE', '8', '0', '10', '10.0', '20', '20.0', '40', '4.5',
+    '0', 'ENDSEC', '0', 'EOF',
+  ].join('\n');
+
+  const circle = parseDxf(dxf).entities[0];
+  assert.equal(circle?.kind, 'circle');
+  assert.equal(circle?.radius, 4.5);
+});
+
+test('an open polyline is not offered as a boundary', () => {
+  // A boundary that does not close is not a boundary, and importing one as if
+  // it were would produce an area for a shape that has no inside.
+  const dxf = [
+    '0', 'SECTION', '2', 'ENTITIES',
+    '0', 'LWPOLYLINE', '8', 'FENCE', '90', '3', '70', '0',
+    '10', '0.0', '20', '0.0',
+    '10', '10.0', '20', '0.0',
+    '10', '10.0', '20', '10.0',
+    '0', 'ENDSEC', '0', 'EOF',
+  ].join('\n');
+
+  const survey = dxfToSurvey(parseDxf(dxf));
+  assert.equal(survey.rings.length, 0);
+});
+
+test('a file with no geometry says so rather than importing an empty survey', () => {
+  // An empty survey looks like a successful import of a site with nothing on
+  // it, which is the one outcome the user cannot tell from a failure.
+  const empty = parseDxf(['0', 'SECTION', '2', 'ENTITIES', '0', 'ENDSEC', '0', 'EOF'].join('\n'));
+  assert.equal(empty.entities.length, 0);
+  assert.match(empty.problems[0]?.message ?? '', /no points, lines or polylines/);
+
+  const notDxf = parseDxf('this is a text file, not a drawing');
+  assert.match(notDxf.problems[0]?.message ?? '', /no ENTITIES section/);
+});
+
+test('windows line endings and stray whitespace do not break it', () => {
+  // A file that has been through an editor, a mail client and a zip is still
+  // one the surveyor expects to open.
+  const dxf = [
+    ' 0 ', 'SECTION', '  2', 'ENTITIES',
+    '0', 'POINT', '8', '0', ' 10 ', ' 5.0 ', '20', '7.0',
+    '0', 'ENDSEC', '0', 'EOF',
+  ].join('\r\n');
+
+  const point = parseDxf(dxf).entities[0];
+  assert.equal(point?.kind, 'point');
+  nearPoint(point!.vertices[0]!, 5, 7);
+});
+
+test('a drawing is told apart from a table before either is read', () => {
+  // The distinction that matters: a DXF put through the table extractor does
+  // not fail, it succeeds — on group codes — and builds a survey of nonsense.
+  assert.equal(looksLikeDxf('0\nSECTION\n2\nENTITIES\n'), true);
+  assert.equal(looksLikeDxf('  0 \r\n SECTION \r\n'), true);
+
+  assert.equal(looksLikeDxf('PT1, 534800.00, 182900.00\nPT2, 534850.00, 182900.00'), false);
+  assert.equal(looksLikeDxf(''), false);
+  // A table whose first cell happens to be zero is still a table.
+  assert.equal(looksLikeDxf('0\t534800.00\t182900.00'), false);
+  // "SECTION" as a column heading, not as a DXF opening pair.
+  assert.equal(looksLikeDxf('SECTION, EASTING, NORTHING'), false);
 });

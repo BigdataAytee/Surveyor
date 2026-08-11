@@ -10,10 +10,14 @@ import { useMemo, useState } from 'react';
 
 import type { SurveyPoint } from '@surveyor/contracts';
 import {
+  dxfToSurvey,
   extractPoints,
+  looksLikeDxf,
+  parseDxf,
   pointsFromExtraction,
   ringFromPointOrder,
   UNIT_ABBREVIATION,
+  type DxfImport,
   type TableAnalysis,
 } from '@surveyor/engine';
 
@@ -94,13 +98,27 @@ export function DataSheet({ onClose }: { readonly onClose: () => void }) {
               <PointEditor key={point.id} point={point} unit={unit} />
             ))}
           </ul>
-          <Button
-            full
-            icon="+"
-            onClick={() => dispatch(addBlankPoint(state.model.points))}
-          >
-            Add point
-          </Button>
+          <div className="tools__row">
+            <Button
+              full
+              icon="+"
+              onClick={() => dispatch(addBlankPoint(state.model.points))}
+            >
+              Add point
+            </Button>
+            {/*
+              Points entered out of sequence read PT4, PT1, PT7 round the
+              boundary, which is a plan a reviewer has to work at. Renumbering
+              rebuilds the ring's references too, so the boundary survives it.
+            */}
+            <Button
+              full
+              title="Rename every point PT1 upward, in boundary order"
+              onClick={() => dispatch({ type: 'renumber-points' })}
+            >
+              Renumber
+            </Button>
+          </div>
         </>
       )}
 
@@ -228,10 +246,19 @@ function PasteImporter({ onDone }: { readonly onDone: () => void }) {
   const { state, dispatch } = useProject();
   const [text, setText] = useState('');
   const [swapped, setSwapped] = useState(false);
+  const [dxf, setDxf] = useState<DxfImport | null>(null);
+
+  // A drawing pasted into the box is still a drawing. This is checked before
+  // the extractor runs, because a DXF put through the table reader does not
+  // fail — it succeeds, on group codes, and hands back a survey of nonsense.
+  const pasted = useMemo(
+    () => (looksLikeDxf(text) ? dxfToSurvey(parseDxf(text)) : null),
+    [text],
+  );
 
   const result = useMemo(
     () =>
-      text.trim().length > 0
+      text.trim().length > 0 && !looksLikeDxf(text)
         ? extractPoints(text, { swapEastingNorthing: swapped })
         : null,
     [text, swapped],
@@ -243,7 +270,20 @@ function PasteImporter({ onDone }: { readonly onDone: () => void }) {
   ).length;
 
   async function readFile(file: File): Promise<void> {
-    setText(await file.text());
+    const contents = await file.text();
+
+    // A DXF is not a table, and running it through the table extractor would
+    // find numbers in it and produce nonsense. Recognised by its own shape
+    // rather than by the file extension, because a drawing renamed .txt is
+    // still a drawing.
+    if (/^\s*0\s*[\r\n]+\s*SECTION/i.test(contents) || file.name.toLowerCase().endsWith('.dxf')) {
+      setDxf(dxfToSurvey(parseDxf(contents)));
+      setText('');
+      return;
+    }
+
+    setDxf(null);
+    setText(contents);
     setSwapped(false);
   }
 
@@ -265,18 +305,62 @@ function PasteImporter({ onDone }: { readonly onDone: () => void }) {
     onDone();
   }
 
+  // Uploaded or pasted, it is the same drawing and gets the same confirmation.
+  const drawing = dxf ?? pasted;
+
+  if (drawing) {
+    return (
+      <DxfPreview
+        result={drawing}
+        onCancel={() => {
+          setDxf(null);
+          setText('');
+        }}
+        onApply={() => {
+          const ring = drawing.rings[0];
+          const points =
+            ring && ring.length >= 3
+              ? ring.map((coordinates, index) => ({
+                  id: `PT${index + 1}`,
+                  coordinates,
+                  provenance: { source: 'user-confirmed' as const },
+                }))
+              : drawing.points.map((point) => ({
+                  ...point,
+                  provenance: { source: 'user-confirmed' as const },
+                }));
+
+          dispatch({
+            type: 'set-model',
+            model: {
+              ...state.model,
+              points,
+              boundary:
+                points.length >= 3
+                  ? [ringFromPointOrder('ring_1', points.map((p) => p.id))]
+                  : [],
+            },
+          });
+          setDxf(null);
+          setText('');
+          onDone();
+        }}
+      />
+    );
+  }
+
   return (
     <div className="importer">
       <label className="importer__file">
         <input
           type="file"
-          accept=".csv,.txt,.tsv,text/plain,text/csv"
+          accept=".csv,.txt,.tsv,.dxf,text/plain,text/csv"
           onChange={(event) => {
             const file = event.target.files?.[0];
             if (file) void readFile(file);
           }}
         />
-        <span>Choose a file</span>
+        <span>Choose a file — table or DXF drawing</span>
       </label>
 
       <Field label="…or paste your points" hint="Any common layout — we work out the columns">
@@ -378,6 +462,70 @@ function DetectedColumns({ analysis }: { readonly analysis: TableAnalysis }) {
         </li>
       ))}
     </ul>
+  );
+}
+
+/**
+ * What was found in a drawing, before any of it becomes survey data.
+ *
+ * The boundary candidate is the largest closed polyline, which is right far
+ * more often than not — but "far more often than not" is not a standard to
+ * import someone's boundary on, so it is shown and confirmed.
+ */
+function DxfPreview({
+  result,
+  onApply,
+  onCancel,
+}: {
+  readonly result: DxfImport;
+  readonly onApply: () => void;
+  readonly onCancel: () => void;
+}) {
+  const ring = result.rings[0];
+  const usable = (ring?.length ?? 0) >= 3 || result.points.length >= 3;
+
+  return (
+    <div className="importer">
+      <div className="importer__result">
+        <StatusBadge tone={usable ? 'ready' : 'review'}>
+          {ring
+            ? `A closed outline with ${ring.length} corners`
+            : `${result.points.length} point${result.points.length === 1 ? '' : 's'}`}
+        </StatusBadge>
+
+        {ring ? (
+          <p className="panel__body">
+            I found {result.rings.length} closed shape
+            {result.rings.length === 1 ? '' : 's'} and took the largest as the
+            boundary. {result.points.length > 0
+              ? `There ${result.points.length === 1 ? 'is' : 'are'} also ${result.points.length} loose point${result.points.length === 1 ? '' : 's'}, which this does not use.`
+              : ''}
+          </p>
+        ) : (
+          <p className="panel__body">
+            There is no closed outline in this drawing, so the points are used
+            in the order they appear. Check the boundary afterwards.
+          </p>
+        )}
+
+        {result.problems.length > 0 ? (
+          <ul className="importer__problems">
+            {result.problems.map((problem) => (
+              <li key={`${problem.line}-${problem.message}`}>{problem.message}</li>
+            ))}
+          </ul>
+        ) : null}
+      </div>
+
+      <div className="tools__row">
+        <Button full variant="primary" disabled={!usable} onClick={onApply}>
+          {usable ? 'Use this drawing' : 'Not enough to draw a boundary'}
+        </Button>
+        <Button full onClick={onCancel}>
+          Cancel
+        </Button>
+      </div>
+    </div>
   );
 }
 

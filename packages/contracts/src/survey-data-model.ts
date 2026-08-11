@@ -172,6 +172,22 @@ export interface SurveyNote {
 // Root
 // ---------------------------------------------------------------------------
 
+/**
+ * One issue of the plan.
+ *
+ * A drawing that has been reissued has to say so, and say what changed —
+ * a reviewer comparing two prints needs to know which is later and why they
+ * differ. Revisions are ordered by the list, not by parsing the number, so
+ * "A", "1" and "P2" all work.
+ */
+export interface Revision {
+  /** As printed: "A", "1", "P2". */
+  readonly code: string;
+  readonly date: IsoTimestamp;
+  readonly description: string;
+  readonly by?: string;
+}
+
 export interface SurveyMetadata {
   readonly jobNumber?: string;
   readonly client?: string;
@@ -180,6 +196,8 @@ export interface SurveyMetadata {
   /** Selects the Plan Composer template. A parameter, never assumed (A.1 §5). */
   readonly jurisdiction: string;
   readonly siteAddress?: string;
+  /** Oldest first. The last one is the current issue. */
+  readonly revisions?: readonly Revision[];
 }
 
 export interface SurveyDataModel {

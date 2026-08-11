@@ -86,6 +86,7 @@ export function planToSvg(plan: ComposedPlan, options: SvgOptions = {}): string 
     parts.push(northArrow(plan));
     parts.push(scaleBar(plan));
     parts.push(titleBlock(plan));
+    parts.push(revisions(plan));
     parts.push(legend(plan));
     parts.push(notes(plan));
   }
@@ -292,6 +293,47 @@ function titleBlock(plan: ComposedPlan): string {
   return `<g id="title-block">${rows.join('')}</g>`;
 }
 
+/**
+ * The revision table, above the title block.
+ *
+ * Newest at the top, because that is the one a reviewer checks first. Only
+ * drawn when there is a revision — an empty table on a first issue is a box
+ * that invites someone to wonder what is missing from it.
+ */
+function revisions(plan: ComposedPlan): string {
+  if (plan.revisions.length === 0) return '';
+
+  const area = plan.titleBlockArea;
+  const rowHeight = 3.4;
+  const height = rowHeight * (plan.revisions.length + 1);
+  const top = area.yMm - height - 2;
+
+  const rows: string[] = [
+    `<rect x="${fmt(area.xMm)}" y="${fmt(top)}" width="${fmt(area.widthMm)}" ` +
+      `height="${fmt(height)}" fill="#ffffff" stroke="#111827" stroke-width="0.4"/>`,
+    `<text x="${fmt(area.xMm + 2)}" y="${fmt(top + 2.4)}" ` +
+      `font-family="Inter, Helvetica, Arial, sans-serif" font-size="2.2" fill="#6b7280">` +
+      `Revisions</text>`,
+  ];
+
+  [...plan.revisions].reverse().forEach((revision, index) => {
+    const y = top + rowHeight * (index + 1) + 2.4;
+    rows.push(
+      `<text x="${fmt(area.xMm + 2)}" y="${fmt(y)}" ` +
+        `font-family="Inter, Helvetica, Arial, sans-serif" font-size="2.2" fill="#111827">` +
+        `${escapeText(revision.code)}</text>`,
+      `<text x="${fmt(area.xMm + 8)}" y="${fmt(y)}" ` +
+        `font-family="Inter, Helvetica, Arial, sans-serif" font-size="2.2" fill="#111827">` +
+        `${escapeText(revision.description)}</text>`,
+      `<text x="${fmt(area.xMm + area.widthMm - 2)}" y="${fmt(y)}" text-anchor="end" ` +
+        `font-family="Inter, Helvetica, Arial, sans-serif" font-size="2.2" fill="#6b7280">` +
+        `${escapeText(revision.date.slice(0, 10))}</text>`,
+    );
+  });
+
+  return `<g id="revisions">${rows.join('')}</g>`;
+}
+
 function legend(plan: ComposedPlan): string {
   if (plan.legend.length === 0) return '';
   const x = plan.frame.xMm + 4;
@@ -301,9 +343,22 @@ function legend(plan: ComposedPlan): string {
     const y = top + index * 4.4;
     const stroke = STROKES[entry.style];
     const dash = stroke.dash ? ` stroke-dasharray="${stroke.dash}"` : '';
+
+    // A symbol entry shows the symbol. A line of the same weight would tell a
+    // reviewer nothing about what the cross on the drawing means.
+    const swatch = entry.symbol
+      ? `<path d="M ${fmt(x + 3)} ${fmt(y)} L ${fmt(x + 5)} ${fmt(y)} ` +
+        `M ${fmt(x + 4)} ${fmt(y - 1)} L ${fmt(x + 4)} ${fmt(y + 1)}" ` +
+        `fill="none" stroke="${stroke.colour}" stroke-width="${stroke.width}"/>` +
+        (entry.symbol === 'benchmark'
+          ? `<circle cx="${fmt(x + 4)}" cy="${fmt(y)}" r="1.6" fill="none" ` +
+            `stroke="${stroke.colour}" stroke-width="${stroke.width}"/>`
+          : '')
+      : `<line x1="${fmt(x)}" y1="${fmt(y)}" x2="${fmt(x + 8)}" y2="${fmt(y)}" ` +
+        `stroke="${stroke.colour}" stroke-width="${stroke.width}"${dash}/>`;
+
     return (
-      `<line x1="${fmt(x)}" y1="${fmt(y)}" x2="${fmt(x + 8)}" y2="${fmt(y)}" ` +
-      `stroke="${stroke.colour}" stroke-width="${stroke.width}"${dash}/>` +
+      swatch +
       `<text x="${fmt(x + 10)}" y="${fmt(y + 0.9)}" font-family="Inter, Helvetica, Arial, sans-serif" ` +
       `font-size="2.4" fill="#374151">${escapeText(entry.description)}</text>`
     );

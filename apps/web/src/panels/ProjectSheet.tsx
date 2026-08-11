@@ -30,6 +30,7 @@ export function ProjectSheet({
 }) {
   const { state, dispatch } = useProject();
   const [confirming, setConfirming] = useState(false);
+  const [revision, setRevision] = useState('');
 
   const points = state.model.points.length;
   const features = state.model.siteFeatures.length;
@@ -77,6 +78,61 @@ export function ProjectSheet({
           ))}
         </select>
       </Field>
+
+      {/*
+        A drawing that has been reissued has to say so and say what changed.
+        The newest revision is the current issue and prints on the sheet.
+      */}
+      <Field
+        label="Revisions"
+        hint="Printed on the sheet, newest first"
+      >
+        <ul className="revisions">
+          {(state.model.metadata.revisions ?? []).map((revision) => (
+            <li key={`${revision.code}-${revision.date}`} className="revisions__item">
+              <span className="numeric">{revision.code}</span>
+              <span>{revision.description}</span>
+              <span className="project__meta numeric">{revision.date.slice(0, 10)}</span>
+            </li>
+          ))}
+          {(state.model.metadata.revisions ?? []).length === 0 ? (
+            <li className="panel__body">First issue — no revisions yet.</li>
+          ) : null}
+        </ul>
+      </Field>
+
+      <div className="tools__row">
+        <TextInput
+          ariaLabel="Revision description"
+          value={revision}
+          placeholder="Boundary corrected after re-survey"
+          onChange={setRevision}
+        />
+        <Button
+          disabled={revision.trim().length === 0}
+          onClick={() => {
+            const existing = state.model.metadata.revisions ?? [];
+            dispatch({
+              type: 'set-metadata',
+              metadata: {
+                revisions: [
+                  ...existing,
+                  {
+                    // A, B, C… which is what a drawing office uses and what a
+                    // reviewer expects to read in the corner of the sheet.
+                    code: String.fromCharCode(65 + existing.length),
+                    date: new Date().toISOString(),
+                    description: revision.trim(),
+                  },
+                ],
+              },
+            });
+            setRevision('');
+          }}
+        >
+          Add revision
+        </Button>
+      </div>
 
       <Card tone="sunken">
         <p className="panel__body">

@@ -14,6 +14,7 @@ import type {
   LabelSpecification,
   PlacedLabel,
   PlanPoint,
+  Revision,
   SurveyDataModel,
   ValidationReport,
 } from '@surveyor/contracts';
@@ -119,6 +120,14 @@ export interface ComposedPlan {
   readonly drawing: Drawing;
   readonly labels: readonly PlacedLabel[];
   readonly titleBlock: readonly TitleBlockEntry[];
+  /**
+   * The issue history, oldest first.
+   *
+   * Carried on the composed plan rather than folded into the title block so
+   * an exporter can print it as the table it is — a reviewer comparing two
+   * prints needs to see which is later and what changed between them.
+   */
+  readonly revisions: readonly Revision[];
   readonly legend: readonly LegendEntry[];
   readonly notes: readonly string[];
   readonly northArrow: { readonly at: SheetPoint; readonly sizeMm: number };
@@ -257,6 +266,7 @@ export function composePlan(input: ComposeInput): ComposeResult {
     drawing: input.drawing,
     labels,
     titleBlock: buildTitleBlock(input, template, transform, fit.sheet),
+    revisions: input.model.metadata.revisions ?? [],
     legend: template.legendRequired ? buildLegend(input.drawing) : [],
     notes: buildNotes(input, template),
     northArrow: {

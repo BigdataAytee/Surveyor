@@ -559,3 +559,19 @@
   gap: var(--space-2);
   font-size: var(--text-caption);
 }
+
+.revisions {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  list-style: none;
+  padding: 0;
+  font-size: var(--text-caption);
+}
+
+.revisions__item {
+  display: grid;
+  grid-template-columns: 2rem 1fr auto;
+  gap: var(--space-2);
+  align-items: baseline;
+}
