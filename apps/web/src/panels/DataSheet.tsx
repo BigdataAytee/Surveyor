@@ -323,6 +323,17 @@ function PasteImporter({ onDone }: { readonly onDone: () => void }) {
               </Card>
             ) : null}
 
+            {/*
+              What the extractor decided about the paste as a whole — which
+              lines it set aside as not being part of the table, and any
+              reading it could not settle from the text alone.
+            */}
+            {result.analysis.warnings.map((warning) => (
+              <p key={warning} className="importer__warning">
+                {warning}
+              </p>
+            ))}
+
             {result.problems.length > 0 ? (
               <ul className="importer__problems">
                 {result.problems.map((problem) => (

@@ -12,6 +12,8 @@
 
 import { useEffect, useMemo, useRef, useState } from 'react';
 
+import { looksLikeSurveyData } from '@surveyor/engine';
+
 import { Button, Card } from '../ui/primitives.js';
 import { SlideUp } from '../ui/motion.js';
 import { useProject } from '../state/store.js';
@@ -27,6 +29,8 @@ import {
   type AssistantMessage,
 } from './assistant.js';
 import { createPlanner } from './planner.js';
+import { ExtractionCard } from './ExtractionCard.js';
+import { readNoteImage } from './vision.js';
 import './ai.css';
 
 export interface AISheetProps {
@@ -75,12 +79,44 @@ export function AISheet({ onOpenPanel }: AISheetProps) {
     setMessages((current) => [...current, message]);
   }
 
+  /**
+   * Data dropped into the conversation, from a paste or from a photograph.
+   *
+   * The reply is written here rather than by a planner because there is
+   * nothing to decide: the extractor has already read the text, and what the
+   * user needs is what it found and a way to confirm it.
+   */
+  function offerExtraction(text: string, imageUrl?: string): void {
+    const offer = {
+      id: `offer_${Date.now()}`,
+      text,
+      ...(imageUrl === undefined ? {} : { imageUrl }),
+    };
+
+    push({
+      id: `msg_${Date.now()}`,
+      role: 'assistant',
+      text: imageUrl
+        ? 'I read the note. Check the numbers against the photo before you use them.'
+        : 'That looks like survey data rather than a question, so I read it through the importer. Here is what I got.',
+      offer,
+    });
+  }
+
   function send(text: string): void {
     const trimmed = text.trim();
     if (trimmed.length === 0) return;
 
     push(userMessage(trimmed));
     setDraft('');
+
+    // A table typed or dropped into the box is data, not a question. Sending it
+    // to a planner would get an answer about it at best; the extractor can
+    // actually use it.
+    if (looksLikeSurveyData(trimmed)) {
+      offerExtraction(trimmed);
+      return;
+    }
 
     // A thinking indicator only for typed questions — B.4 is explicit that it
     // should not appear for every tiny response. With a model planner the wait
@@ -90,6 +126,39 @@ export function AISheet({ onOpenPanel }: AISheetProps) {
       setThinking(false);
       push(message);
     });
+  }
+
+  /**
+   * Paste is intercepted rather than left to the input.
+   *
+   * A single-line input collapses the newlines out of a pasted table, and the
+   * row structure is most of what the extractor reads — by the time the text
+   * reached `send` it would be one long line. Taking it from the clipboard
+   * event keeps it intact.
+   */
+  function handlePaste(event: React.ClipboardEvent<HTMLInputElement>): void {
+    const pasted = event.clipboardData.getData('text');
+    if (!looksLikeSurveyData(pasted)) return;
+
+    event.preventDefault();
+    push(userMessage(summarisePaste(pasted)));
+    offerExtraction(pasted);
+  }
+
+  async function handlePhoto(file: File): Promise<void> {
+    const imageUrl = URL.createObjectURL(file);
+    push({ id: `msg_${Date.now()}`, role: 'user', text: `📷 ${file.name}` });
+    setThinking(true);
+
+    const result = await readNoteImage(file);
+    setThinking(false);
+
+    if (!result.ok) {
+      push({ id: `msg_${Date.now()}`, role: 'assistant', text: result.reason });
+      URL.revokeObjectURL(imageUrl);
+      return;
+    }
+    offerExtraction(result.text, imageUrl);
   }
 
   function runAction(action: AssistantAction): void {
@@ -147,6 +216,29 @@ export function AISheet({ onOpenPanel }: AISheetProps) {
         {messages.map((message, index) => (
           <SlideUp key={message.id} delay={index === messages.length - 1 ? 0 : 0}>
             <Message message={message} onAction={runAction} />
+            {message.offer ? (
+              <ExtractionCard
+                offer={message.offer}
+                onApplied={(count) =>
+                  push({
+                    id: `msg_${Date.now()}`,
+                    role: 'assistant',
+                    text:
+                      `Done — ${count} points are on the drawing and the plan has been ` +
+                      'laid out. Check the boundary order, then look at Review before ' +
+                      'you export.' +
+                      // Buildings and roads were not part of the paste, so they are
+                      // still where they were. Said plainly rather than deleted:
+                      // they may be this site's, and they may not.
+                      (state.model.siteFeatures.length > 0
+                        ? ` I left the ${state.model.siteFeatures.length} feature${
+                            state.model.siteFeatures.length === 1 ? '' : 's'
+                          } already on the drawing alone — delete them from Layers if they belong to a different site.`
+                        : ''),
+                  })
+                }
+              />
+            ) : null}
           </SlideUp>
         ))}
 
@@ -172,12 +264,31 @@ export function AISheet({ onOpenPanel }: AISheetProps) {
           send(draft);
         }}
       >
+        <label className="ai__camera">
+          {/*
+            `capture` opens the camera directly on a phone and is ignored on a
+            desktop, where the same control becomes a file picker.
+          */}
+          <input
+            type="file"
+            accept="image/*"
+            capture="environment"
+            aria-label="Photograph a note"
+            onChange={(event) => {
+              const file = event.target.files?.[0];
+              event.target.value = '';
+              if (file) void handlePhoto(file);
+            }}
+          />
+          <span aria-hidden="true">📷</span>
+        </label>
         <input
           className="ai__input"
           value={draft}
-          placeholder="Ask about the plan…"
-          aria-label="Ask the assistant"
+          placeholder="Ask, or paste your points…"
+          aria-label="Ask the assistant, or paste survey data"
           onChange={(event) => setDraft(event.target.value)}
+          onPaste={handlePaste}
         />
         <Button type="submit" variant="primary" size="sm" disabled={draft.trim().length === 0}>
           Send
@@ -185,6 +296,13 @@ export function AISheet({ onOpenPanel }: AISheetProps) {
       </form>
     </div>
   );
+}
+
+/** What to show in the conversation for a paste, rather than the whole table. */
+function summarisePaste(text: string): string {
+  const lines = text.split(/\r?\n/).filter((line) => line.trim().length > 0);
+  const head = lines.slice(0, 2).join('\n');
+  return lines.length > 2 ? `${head}\n… ${lines.length - 2} more lines` : head;
 }
 
 function Message({

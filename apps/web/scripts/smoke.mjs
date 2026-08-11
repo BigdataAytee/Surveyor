@@ -279,6 +279,98 @@ for (const [name, viewport] of [
   await page.close();
 }
 
+// --- Messy paste: a table wrapped in everything else a page has on it -------
+
+{
+  // Every one of these decorations used to be fatal on its own, because every
+  // non-empty line was assumed to be a row of the table.
+  const MESSY = [
+    'BOUNDARY SURVEY — 25 High Street',
+    'Surveyed 11/08/2026',
+    '',
+    'Pt No   Easting     Northing    Description',
+    '-----   -------     --------    -----------',
+    'P1      534800.00   182900.00   Corner, iron pin',
+    'P2      534845.00   182900.00   Corner',
+    'P3      534845.00   182935.00   Corner',
+    'P4      534800.00   182935.00   Corner',
+    'Total: 4 points',
+  ].join('\n');
+
+  const page = await open('messy-paste', PHONE);
+  await page.getByRole('button', { name: 'Data' }).click();
+  await page.waitForTimeout(400);
+  await page.getByRole('tab', { name: 'Paste table' }).click();
+  await page.waitForTimeout(300);
+
+  await page.locator('.importer__input').fill(MESSY);
+  await page.waitForTimeout(400);
+
+  const text = (await page.textContent('body')) ?? '';
+  expect(/4 points read/.test(text), 'messy paste: the table inside the page was not found');
+  expect(
+    /skipped .* lines/.test(text),
+    'messy paste: the lines outside the table were not accounted for',
+  );
+  expect(
+    !/Does that look right/.test(text),
+    'messy paste: headings were present, so the column order should not be in doubt',
+  );
+  await shot(page, 'messy-paste');
+  await page.close();
+}
+
+// --- Pasting survey data into the assistant ---------------------------------
+
+{
+  const page = await open('chat-paste', PHONE);
+  await page.getByRole('button', { name: 'Assistant' }).click();
+  await page.waitForTimeout(400);
+
+  const input = page.getByLabel('Ask the assistant, or paste survey data').locator('visible=true').first();
+  await input.click();
+
+  // A real clipboard event: a single-line input strips the newlines out of a
+  // pasted table, and the rows are most of what the extractor reads.
+  const handle = await input.elementHandle();
+  await page.evaluate(
+    ([element, text]) => {
+      const transfer = new DataTransfer();
+      transfer.setData('text', text);
+      element.dispatchEvent(
+        new ClipboardEvent('paste', { clipboardData: transfer, bubbles: true, cancelable: true }),
+      );
+    },
+    [handle, ['P1,534800,182900', 'P2,534845,182900', 'P3,534845,182935', 'P4,534800,182935'].join('\n')],
+  );
+  await page.waitForTimeout(500);
+
+  const card = page.locator('.extraction').locator('visible=true').first();
+  expect(await card.isVisible(), 'chat paste: pasted data was not read');
+  expect(
+    /4 points read/.test((await card.innerText()) ?? ''),
+    'chat paste: the points were not reported back',
+  );
+  await shot(page, 'chat-paste');
+
+  const use = page.getByRole('button', { name: /Use these points/ }).locator('visible=true').first();
+  expect(await use.isVisible(), 'chat paste: no way to accept the points');
+  await use.click();
+  await page.waitForTimeout(800);
+
+  // Accepting must produce a drawn plan, not just a message saying so.
+  expect(
+    (await page.locator('.element--point').count()) >= 4,
+    'chat paste: accepting did not put the points on the drawing',
+  );
+  expect(
+    /m²/.test((await page.textContent('body')) ?? ''),
+    'chat paste: no area after accepting a closed boundary',
+  );
+  await shot(page, 'chat-paste-applied');
+  await page.close();
+}
+
 // --- Traverse entry ---------------------------------------------------------
 
 {

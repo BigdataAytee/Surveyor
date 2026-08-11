@@ -151,6 +151,12 @@
   align-items: flex-start;
 }
 
+.importer__warning {
+  margin: 0;
+  font-size: var(--text-caption);
+  color: var(--ink-secondary);
+}
+
 .importer__problems {
   display: flex;
   flex-direction: column;

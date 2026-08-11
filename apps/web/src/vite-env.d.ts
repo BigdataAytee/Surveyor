@@ -6,6 +6,11 @@ interface ImportMetaEnv {
    * planner. Deliberately a URL and not a key — see src/ai/planner.ts.
    */
   readonly VITE_ASSISTANT_ENDPOINT?: string;
+  /**
+   * Where photographs of notes are transcribed. Unset means the camera button
+   * explains that reading photos is not set up, and points at pasting instead.
+   */
+  readonly VITE_EXTRACT_ENDPOINT?: string;
 }
 
 interface ImportMeta {

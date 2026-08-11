@@ -68,9 +68,17 @@ reports real progress rather than animating a timer.
   fold over itself. Measure reports bearing and distance between two taps,
   through the same COGO call the plan's dimensions use.
 - **Import** accepts a pasted table or an uploaded `.csv`/`.txt`. The extractor
-  works out the delimiter, the header and the column roles, and scores itself.
-  Where it genuinely cannot tell — easting/northing order with no headings — it
-  asks rather than picking the commoner convention.
+  finds the table inside whatever else came with it — a site name, a date, a
+  rule under the headings, a total at the foot — works out the delimiter, the
+  header and the column roles, and scores itself. Where it genuinely cannot
+  tell — easting/northing order with no headings — it asks rather than picking
+  the commoner convention.
+- **Paste into the assistant** and it reads the data instead of answering a
+  question about it. What it found comes back as a list you confirm; confirming
+  loads the points and lays the plan out.
+- **Photograph a note** with the camera button. The photo is transcribed and
+  shown beside the numbers that were read from it, so the transcription is
+  something you check rather than something you take on trust.
 - **Traverse entry** takes a deed-style boundary as bearings and distances.
   Closure is computed and shown while you type, because on a traverse — unlike a
   coordinate boundary, which closes by construction — that number decides
@@ -98,6 +106,15 @@ key shipped to the browser is a key published to every user, so the model is
 reached through an endpoint the operator hosts (`apps/web/server/assistant.mjs`
 is a working reference).
 
+Reading a photographed note goes to a second endpoint
+(`apps/web/src/ai/vision.ts`), and the model is asked for one thing: a
+transcription of the characters on the page. Deciding that the second column is
+a northing is a claim about the *survey*, and that stays with `extractPoints` —
+deterministic, tested, and scoring its own confidence. A model that returned
+finished points would be authoring survey values. The transcription is a claim
+about the *document*, which is why the photo is shown next to the numbers: it is
+the one part you can check by looking.
+
 The model is bounded twice. A strict tool schema
 (`apps/web/src/ai/intent-schema.ts`) enumerates the intent vocabulary, and
 nothing in it accepts a number — so a model cannot express a coordinate,
@@ -110,18 +127,18 @@ so the assistant degrades rather than going silent.
 ## Testing
 
 ```bash
-npm test                                    # 119 tests across contracts, engine and web
+npm test                                    # 144 tests across contracts, engine and web
 npm run smoke --workspace @surveyor/web     # browser flows (needs a preview server)
 ```
 
 The smoke test drives the trust loop, the export gate, the drawing and measuring
-tools, import, traverse entry and persistence in a real browser, and fails on
-console errors, on-screen label collisions, or horizontal overflow at any
-breakpoint.
+tools, import, a messy paste, pasting into the assistant, traverse entry and
+persistence in a real browser, and fails on console errors, on-screen label
+collisions, or horizontal overflow at any breakpoint.
 
-The web suite (`apps/web/test/intent-schema.test.ts`) treats model output as
-hostile input: off-vocabulary actions, invented element ids, malformed replies,
-oversized replies, transport failures and hangs.
+The web suites treat model output as hostile input — off-vocabulary actions,
+invented element ids, malformed and oversized replies, transport failures, hangs,
+and a transcription endpoint that returns prose instead of a table.
 
 ```bash
 npm run build --workspace @surveyor/web
@@ -142,15 +159,17 @@ environment variables and no server. Two are optional:
 | Variable | Where | Effect |
 |---|---|---|
 | `VITE_ASSISTANT_ENDPOINT` | Build | Set to `/api/assistant` to route the assistant through the model. Unset, the app uses its rule planner. |
-| `ANTHROPIC_API_KEY` | Runtime | Read by [`api/assistant.js`](./api/assistant.js). Unset, that function replies 503 and the app falls back to the rules. |
+| `VITE_EXTRACT_ENDPOINT` | Build | Set to `/api/extract` to enable reading photographed notes. Unset, the camera button says so and points at pasting. |
+| `ANTHROPIC_API_KEY` | Runtime | Read by both functions. Unset, they reply 503 and the app falls back to what it can do without them. |
 
 `api/assistant.js` is the local reference server
-(`apps/web/server/assistant.mjs`) as a serverless function, so the deployed app
-can reach a model without the browser holding a key. It is **unauthenticated and
-spends your Anthropic credits on every call.** The same-origin check in it stops
-another site's browser code from using it; it does not stop anyone with `curl`.
-Put authentication and rate limiting in front of it before pointing real traffic
-at it.
+(`apps/web/server/assistant.mjs`) as a serverless function; `api/extract.js`
+transcribes photographs. Both exist so the deployed app can reach a model
+without the browser holding a key. Both are **unauthenticated and spend your
+Anthropic credits on every call**, and `api/extract.js` also accepts an image
+upload. The same-origin check in them stops another site's browser code from
+using them; it does not stop anyone with `curl`. Put authentication and rate
+limiting in front of them before pointing real traffic at them.
 
 ## Status
 
@@ -166,7 +185,10 @@ has — which is none over coordinates or survey values. Running against a real
 model needs only an endpoint URL; what that endpoint returns is validated by
 tests that require no key.
 
-Text extraction (`packages/engine/src/document.ts`) infers structure and scores
-its confidence for pasted and uploaded tables. Vision/OCR plugs into the same
-seam: produce a `DocumentExtraction` with honest per-field confidences and
-nothing downstream changes.
+Text extraction (`packages/engine/src/document.ts`) finds the table inside a
+page, infers its structure and scores its confidence — for a paste, an uploaded
+file, a message to the assistant, or a transcribed photograph, all of which
+arrive at the same function. It handles grouped thousands in both conventions,
+quoted CSV, axis letters written against the values, and notes too ragged to
+have columns at all; where a reading is genuinely undecidable it says so rather
+than choosing.

@@ -45,6 +45,22 @@ export interface AssistantAction {
   readonly tone?: 'primary' | 'secondary';
 }
 
+/**
+ * Something the user dropped into the conversation for the extractor to read —
+ * a pasted table, or a photograph of one.
+ *
+ * It hangs off the message rather than being folded into `text` because it is
+ * not something anyone said. The reading of it is done by the Document AI
+ * extractor and confirmed by the user; the conversation only carries it.
+ */
+export interface ExtractionOffer {
+  readonly id: string;
+  /** The text as it arrived, kept so the reading can be redone on request. */
+  readonly text: string;
+  /** A photograph the text was transcribed from, shown beside the numbers. */
+  readonly imageUrl?: string;
+}
+
 export interface AssistantMessage {
   readonly id: string;
   readonly role: 'assistant' | 'user';
@@ -52,6 +68,8 @@ export interface AssistantMessage {
   readonly actions?: readonly AssistantAction[];
   /** Object ids to pulse on the canvas while this message is the latest. */
   readonly references?: readonly string[];
+  /** Data awaiting the user's confirmation before it enters the survey. */
+  readonly offer?: ExtractionOffer;
 }
 
 // ---------------------------------------------------------------------------
