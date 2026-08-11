@@ -173,6 +173,66 @@ function area(value: number, ctx: LabelContext): string {
 
 const TEMPLATES: readonly Template[] = [
   {
+    /**
+     * A spot height, e.g. `45.20`.
+     *
+     * Read off the feature's elevation attribute rather than written into a
+     * label by hand, so a level that is corrected on the data sheet is
+     * corrected on the plan — which is the whole reason labels are rendered
+     * from the model rather than typed.
+     */
+    id: 'feature.level',
+    description: 'A measured level at a point',
+    bindings: ['feature'],
+    render: (r, ctx) => {
+      if (r.feature?.kind !== 'feature') return null;
+      const level = r.feature.feature.attributes.elevation;
+      if (typeof level !== 'number' || !Number.isFinite(level)) return null;
+      return level.toFixed(ctx.format.distanceDecimals);
+    },
+  },
+  {
+    id: 'feature.levelWithName',
+    description: 'A benchmark: its name and its level',
+    bindings: ['feature'],
+    render: (r, ctx) => {
+      if (r.feature?.kind !== 'feature') return null;
+      const { attributes } = r.feature.feature;
+      const level = attributes.elevation;
+      if (typeof level !== 'number' || !Number.isFinite(level)) return null;
+      const name = attributes.name === undefined ? 'BM' : String(attributes.name);
+      return `${name}  ${level.toFixed(ctx.format.distanceDecimals)}`;
+    },
+  },
+  {
+    id: 'feature.radius',
+    description: 'The radius of a circular feature',
+    bindings: ['feature'],
+    render: (r, ctx) => {
+      if (r.feature?.kind !== 'feature') return null;
+      const geometry = r.feature.feature.geometry;
+      if (geometry.kind !== 'circle' && geometry.kind !== 'arc') return null;
+      return `R ${distance(geometry.radius, ctx)}`;
+    },
+  },
+  {
+    /**
+     * "(proposed)" and nothing at all for existing.
+     *
+     * A plan that shows both has to say which is which, and saying it only
+     * where it differs from the default keeps an existing-conditions drawing
+     * from being covered in the word "existing".
+     */
+    id: 'feature.status',
+    description: 'Whether a feature is existing or proposed',
+    bindings: ['feature'],
+    render: (r) => {
+      if (r.feature?.kind !== 'feature') return null;
+      const status = r.feature.feature.status;
+      return status === undefined || status === 'existing' ? null : `(${status})`;
+    },
+  },
+  {
     id: 'point.id',
     description: 'The point name, e.g. PT1',
     bindings: ['point'],

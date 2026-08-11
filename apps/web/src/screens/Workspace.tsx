@@ -12,6 +12,7 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import { contextFor, placeLabels, UNIT_ABBREVIATION } from '@surveyor/engine';
 
 import { DrawingCanvas, type CanvasTool } from '../canvas/DrawingCanvas.js';
+import { AddSheet } from '../panels/AddSheet.js';
 import { ProjectSheet } from '../panels/ProjectSheet.js';
 import { ToolsSheet } from '../panels/ToolsSheet.js';
 import { PropertiesSheet } from '../panels/PropertiesSheet.js';
@@ -43,6 +44,7 @@ type Panel =
   | 'properties'
   | 'project'
   | 'tools'
+  | 'add'
   | null;
 
 /** Cap height the canvas stylesheet draws labels at, and its paper equivalent. */
@@ -119,6 +121,9 @@ export function Workspace() {
           return;
         case 'e':
           setPanel('tools');
+          return;
+        case 'a':
+          setPanel('add');
           return;
         case 'f':
           setSnapping((on) => !on);
@@ -416,6 +421,15 @@ export function Workspace() {
           <Toggle label="Grid" checked={showGrid} onChange={setShowGrid} />
           <Toggle label="Snapping" checked={snapping} onChange={setSnapping} />
         </div>
+      </BottomSheet>
+
+      <BottomSheet
+        open={panel === 'add'}
+        onClose={() => setPanel(null)}
+        title="Add to the drawing"
+        subtitle="Buildings, fences, walls, trees, levels and notes"
+      >
+        <AddSheet onClose={() => setPanel(null)} />
       </BottomSheet>
 
       <BottomSheet

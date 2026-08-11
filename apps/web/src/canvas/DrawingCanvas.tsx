@@ -586,11 +586,31 @@ function Element({
 
   if (element.kind === 'symbol') {
     const p = project(element.at);
+    // A level is a cross because a cross has an unambiguous centre — the level
+    // is at that point, and a dot big enough to see would cover it. The same
+    // symbology the exported sheet uses, so screen and paper agree.
+    const cross = element.symbol === 'level' || element.symbol === 'benchmark';
+
     return (
-      <g className={`${classes} element--point`} data-id={element.id}>
+      <g
+        className={`${classes} element--point element--${element.symbol}`}
+        data-id={element.id}
+      >
         {/* An invisible disc gives the small marker a 44px touch target. */}
         <circle className="element__hit" cx={p.x} cy={p.y} r={22} />
-        <circle className="element__marker" cx={p.x} cy={p.y} r={4} />
+        {cross ? (
+          <>
+            <path
+              className="element__marker-cross"
+              d={`M ${p.x - 6} ${p.y} L ${p.x + 6} ${p.y} M ${p.x} ${p.y - 6} L ${p.x} ${p.y + 6}`}
+            />
+            {element.symbol === 'benchmark' ? (
+              <circle className="element__marker-ring" cx={p.x} cy={p.y} r={9} />
+            ) : null}
+          </>
+        ) : (
+          <circle className="element__marker" cx={p.x} cy={p.y} r={4} />
+        )}
       </g>
     );
   }

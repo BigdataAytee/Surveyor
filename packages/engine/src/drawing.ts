@@ -43,12 +43,21 @@ export type StrokeStyle =
   | 'water'
   | 'vegetation'
   | 'easement'
+  | 'wall'
+  | 'utility'
+  | 'annotation'
   | 'point-marker';
 
 export type PointSymbol =
   | 'survey-station'
   | 'boundary-corner'
   | 'found-marker'
+  /** A spot height — drawn as a cross with its level beside it. */
+  | 'level'
+  /** A benchmark, which the levels on the plan are measured from. */
+  | 'benchmark'
+  | 'tree'
+  | 'gate'
   | 'generic';
 
 export type DrawingElement =
@@ -94,13 +103,68 @@ export interface Drawing {
 const FEATURE_STYLE: Readonly<Record<FeatureKind, StrokeStyle>> = {
   building: 'building',
   road: 'road',
+  driveway: 'road',
   fence: 'fence',
+  wall: 'wall',
+  gate: 'fence',
   access: 'access',
   water: 'water',
   vegetation: 'vegetation',
+  tree: 'vegetation',
+  utility: 'utility',
   easement: 'easement',
+  level: 'point-marker',
+  benchmark: 'point-marker',
+  annotation: 'annotation',
   other: 'building',
 };
+
+/** The symbol a point-shaped feature is drawn with. */
+const FEATURE_SYMBOL: Readonly<Partial<Record<FeatureKind, PointSymbol>>> = {
+  level: 'level',
+  benchmark: 'benchmark',
+  tree: 'tree',
+  gate: 'gate',
+};
+
+/**
+ * How finely a circle or arc is broken into straight segments.
+ *
+ * Fixed rather than adaptive, because the drawing this produces is the same
+ * one the exporter writes: a circle that was smooth on screen and faceted on
+ * the sheet would be two different circles. 64 segments keeps the chord error
+ * under a thousandth of the radius, which is finer than any plan scale can
+ * show.
+ */
+const CIRCLE_SEGMENTS = 64;
+
+function arcPoints(
+  centre: Coordinates,
+  radius: number,
+  startBearing: number,
+  endBearing: number,
+  closed: boolean,
+): readonly Coordinates[] {
+  // Bearings are clockwise from north, as everywhere else in the system.
+  const sweep = closed ? 360 : normaliseSweep(startBearing, endBearing);
+  const steps = Math.max(2, Math.round((CIRCLE_SEGMENTS * Math.abs(sweep)) / 360));
+  const points: Coordinates[] = [];
+
+  for (let i = 0; i <= steps; i += 1) {
+    const bearing = startBearing + (sweep * i) / steps;
+    const radians = (bearing * Math.PI) / 180;
+    points.push({
+      easting: centre.easting + radius * Math.sin(radians),
+      northing: centre.northing + radius * Math.cos(radians),
+    });
+  }
+  return points;
+}
+
+function normaliseSweep(from: number, to: number): number {
+  const raw = (to - from) % 360;
+  return raw < 0 ? raw + 360 : raw;
+}
 
 /** How finely arcs are tessellated. Fine enough that a 1:200 plot looks smooth. */
 const CURVE_SEGMENTS = 32;
@@ -206,7 +270,35 @@ function featureElements(features: readonly SiteFeature[]): DrawingElement[] {
           kind: 'symbol',
           id: feature.id,
           at: feature.geometry.at,
-          symbol: 'generic',
+          symbol: FEATURE_SYMBOL[feature.type] ?? 'generic',
+          subject,
+          provenance: feature.provenance,
+        });
+        break;
+      case 'circle':
+        // Closed, so it is an area with a real radius rather than a loop of
+        // vertices that happens to look round.
+        elements.push({
+          kind: 'polygon',
+          id: feature.id,
+          points: arcPoints(feature.geometry.centre, feature.geometry.radius, 0, 360, true),
+          style,
+          subject,
+          provenance: feature.provenance,
+        });
+        break;
+      case 'arc':
+        elements.push({
+          kind: 'polyline',
+          id: feature.id,
+          points: arcPoints(
+            feature.geometry.centre,
+            feature.geometry.radius,
+            feature.geometry.startBearing,
+            feature.geometry.endBearing,
+            false,
+          ),
+          style,
           subject,
           provenance: feature.provenance,
         });

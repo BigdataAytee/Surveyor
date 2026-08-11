@@ -12,9 +12,10 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
-import type { Coordinates } from '@surveyor/contracts';
+import type { Coordinates, SiteFeature } from '@surveyor/contracts';
 
 import { distanceBetween, polygonArea, signedArea } from '../src/cogo.js';
+import { buildDrawing } from '../src/drawing.js';
 import {
   displacement,
   mirror,
@@ -446,4 +447,110 @@ test('ortho holds a line square while its length is chosen', () => {
 test('polar tracking snaps to any step, including 45 degrees', () => {
   const constrained = constrainToAngle(at(0, 0), at(10, 9), 45);
   near(constrained.easting, constrained.northing, 1e-9);
+});
+
+// ---------------------------------------------------------------------------
+// Drawing entities
+// ---------------------------------------------------------------------------
+
+/** A drawing of nothing but the features given, for testing how they render. */
+function drawingOf(features: readonly SiteFeature[]) {
+  return buildDrawing({
+    model: {
+      metadata: { jurisdiction: 'generic' },
+      crs: {
+        code: 'EPSG:27700',
+        name: 'OSGB36 / British National Grid',
+        datum: 'OSGB36',
+        units: 'metre',
+        bearingConvention: 'quadrant',
+      },
+      points: [],
+      boundary: [],
+      siteFeatures: features,
+      notes: [],
+    },
+    rings: [],
+  });
+}
+
+test('a circle is drawn round, closed, and at its real radius', () => {
+  // Stored as centre and radius, tessellated only to draw it — so the spread
+  // of a tree canopy stays a number the drawing knows rather than one you
+  // measure off it.
+  const drawing = drawingOf([
+      {
+        id: 'tree_1',
+        type: 'tree',
+        geometry: { kind: 'circle', centre: at(534810, 182910), radius: 3 },
+        attributes: { name: 'Oak' },
+        provenance: { source: 'measured' },
+      },
+  ]);
+
+  const element = drawing.layers
+    .flatMap((layer) => layer.elements)
+    .find((candidate) => candidate.id === 'tree_1');
+
+  assert.ok(element);
+  assert.equal(element.kind, 'polygon');
+  if (element.kind !== 'polygon') return;
+
+  for (const vertex of element.points) {
+    near(distanceBetween(vertex, at(534810, 182910)), 3, 1e-9);
+  }
+  // Round enough that the chord error is finer than any plan scale can show.
+  assert.ok(element.points.length >= 32);
+});
+
+test('an arc runs between the bearings it was given, the short way round', () => {
+  const drawing = drawingOf([
+      {
+        id: 'arc_1',
+        type: 'access',
+        geometry: {
+          kind: 'arc',
+          centre: at(0, 0),
+          radius: 10,
+          startBearing: 0,
+          endBearing: 90,
+        },
+        attributes: {},
+        provenance: { source: 'measured' },
+      },
+  ]);
+
+  const element = drawing.layers
+    .flatMap((layer) => layer.elements)
+    .find((candidate) => candidate.id === 'arc_1');
+  assert.ok(element);
+  if (element.kind === 'symbol') return;
+
+  // Bearing 0 is due north, 90 due east — the same convention as everywhere.
+  nearPoint(element.points[0]!, 0, 10, 1e-9);
+  nearPoint(element.points[element.points.length - 1]!, 10, 0, 1e-9);
+  for (const vertex of element.points) near(distanceBetween(vertex, at(0, 0)), 10, 1e-9);
+});
+
+test('every feature kind has a stroke style, so none is drawn as an unexplained line', () => {
+  // The compiler enforces this too; the test states why it matters.
+  for (const kind of [
+    'building', 'road', 'driveway', 'fence', 'wall', 'gate', 'access',
+    'water', 'vegetation', 'tree', 'utility', 'easement', 'level',
+    'benchmark', 'annotation', 'other',
+  ] as const) {
+    const drawing = drawingOf([
+      {
+        id: `f_${kind}`,
+        type: kind,
+        geometry: { kind: 'point', at: at(0, 0) },
+        attributes: {},
+        provenance: { source: 'measured' },
+      },
+    ]);
+    const element = drawing.layers
+      .flatMap((layer) => layer.elements)
+      .find((candidate) => candidate.id === `f_${kind}`);
+    assert.ok(element, `${kind} was not drawn at all`);
+  }
 });

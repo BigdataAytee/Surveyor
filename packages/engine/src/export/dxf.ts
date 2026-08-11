@@ -26,6 +26,9 @@ const LAYER_COLOUR: Readonly<Record<StrokeStyle, number>> = {
   water: 5,
   vegetation: 3,
   easement: 6,
+  wall: 8,
+  utility: 4,
+  annotation: 7,
   'point-marker': 1,
 };
 

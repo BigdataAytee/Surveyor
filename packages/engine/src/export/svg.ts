@@ -45,6 +45,11 @@ const STROKES: Readonly<Record<StrokeStyle, StrokeSpec>> = {
   water: { width: 0.22, colour: '#3b82f6', fill: '#eff6ff' },
   vegetation: { width: 0.22, colour: '#16a34a', fill: '#f0fdf4' },
   easement: { width: 0.22, colour: '#7c3aed', dash: '5 2' },
+  // A wall is a solid line heavier than a fence; a fence is a hedge or wire
+  // and is drawn broken, which is the ordinary drafting distinction.
+  wall: { width: 0.35, colour: '#374151' },
+  utility: { width: 0.18, colour: '#0891b2', dash: '6 2 1 2' },
+  annotation: { width: 0.18, colour: '#111827' },
   'point-marker': { width: 0.25, colour: '#111827' },
 };
 
@@ -124,6 +129,27 @@ function renderElement(
         `<circle data-id="${escapeAttr(element.id)}" cx="${fmt(p.xMm)}" cy="${fmt(p.yMm)}" ` +
         `r="${size}" fill="none" stroke="${stroke.colour}" stroke-width="${stroke.width}"${opacity}/>`
       );
+    }
+
+    /*
+     * Conventional survey symbology, not decoration. A spot height is a cross
+     * because a cross has an unambiguous centre — the level is *at* that
+     * point, and a filled dot large enough to see would hide it. A benchmark
+     * is the cross in a circle it has been for a century, and a drafter reads
+     * both without a legend.
+     */
+    if (element.symbol === 'level' || element.symbol === 'benchmark') {
+      const arm = size;
+      const cross =
+        `<path d="M ${fmt(p.xMm - arm)} ${fmt(p.yMm)} L ${fmt(p.xMm + arm)} ${fmt(p.yMm)} ` +
+        `M ${fmt(p.xMm)} ${fmt(p.yMm - arm)} L ${fmt(p.xMm)} ${fmt(p.yMm + arm)}" ` +
+        `fill="none" stroke="${stroke.colour}" stroke-width="${stroke.width}"${opacity}/>`;
+      const ring =
+        element.symbol === 'benchmark'
+          ? `<circle cx="${fmt(p.xMm)}" cy="${fmt(p.yMm)}" r="${fmt(arm * 1.6)}" ` +
+            `fill="none" stroke="${stroke.colour}" stroke-width="${stroke.width}"${opacity}/>`
+          : '';
+      return `<g data-id="${escapeAttr(element.id)}">${cross}${ring}</g>`;
     }
     return (
       `<path data-id="${escapeAttr(element.id)}" d="M ${fmt(p.xMm - size)} ${fmt(p.yMm)} ` +

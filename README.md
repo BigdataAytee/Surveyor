@@ -79,7 +79,12 @@ reports real progress rather than animating a timer.
   a surveyor moving a building 3 m north means 3.000 m and no pointer can say
   that. An offset produces a real setback line — mitred corners, exactly the
   distance from the boundary anywhere you measure.
-- **Keyboard**: `V`/`D`/`M` pick a tool, `E` opens Edit, `F` toggles snapping,
+- **Add** (`A`) puts the rest of a site plan on the drawing: buildings and
+  driveways, fences, walls and service runs, gates, trees drawn at their real
+  canopy spread, spot heights, benchmarks and notes. Each is marked existing or
+  proposed, and a level is printed from its elevation rather than typed as a
+  label — so correcting the figure corrects the plan.
+- **Keyboard**: `V`/`D`/`M` pick a tool, `A` adds, `E` opens Edit, `F` toggles snapping,
   `Delete` removes the selection, `Escape` clears it, `Ctrl+Z` / `Ctrl+Shift+Z`
   undo and redo.
 - **Import** accepts a pasted table or an uploaded `.csv`/`.txt`. The extractor
@@ -180,12 +185,12 @@ handles it. The schema is the seatbelt; the validator is the crumple zone.
 ## Testing
 
 ```bash
-npm test                                    # 200 tests across contracts, engine and web
+npm test                                    # 203 tests across contracts, engine and web
 npm run smoke --workspace @surveyor/web     # browser flows (needs a preview server)
 ```
 
 The smoke test drives the trust loop, the export gate, the drawing and measuring
-tools, CAD editing, import, a messy paste, pasting into the assistant, starting
+tools, CAD editing, drawing entities, import, a messy paste, pasting into the assistant, starting
 a new project, asking the assistant for help, traverse entry and persistence in
 a real browser, and fails on console errors, on-screen label collisions, or horizontal
 overflow at any breakpoint.

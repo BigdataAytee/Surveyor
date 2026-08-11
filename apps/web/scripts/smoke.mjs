@@ -625,6 +625,53 @@ if (CLASSIFIER_ONLY) {
   await page.close();
 }
 
+// --- Drawing entities -------------------------------------------------------
+
+{
+  // The things a site plan carries besides the parcel outline. Each has a
+  // conventional way of being drawn, which is the point of naming the kind
+  // rather than putting a grey line on the drawing.
+  const page = await open('entities', DESKTOP);
+
+  async function add(kind, fill) {
+    await page.keyboard.press('a');
+    await page.waitForTimeout(400);
+    await page.getByLabel('Feature kind').selectOption(kind);
+    await page.waitForTimeout(250);
+    if (fill) await fill();
+    await page.getByRole('button', { name: 'Add to the drawing' }).click();
+    await page.waitForTimeout(600);
+  }
+
+  await add('tree', async () => {
+    await page.getByLabel(/Feature name/).fill('Oak');
+    await page.getByLabel(/Radius in/).fill('4');
+  });
+  await add('level', async () => {
+    await page.getByLabel(/Level in/).fill('45.20');
+  });
+  await add('wall', async () => {
+    await page.getByLabel(/Feature name/).fill('Boundary wall');
+    await page.getByLabel(/Length in/).fill('12');
+  });
+
+  await page.keyboard.press('Escape');
+  await page.waitForTimeout(700);
+
+  const text = (await page.textContent('body')) ?? '';
+  expect(/Oak/.test(text), 'entities: the tree was not labelled');
+  // The level is rendered from the elevation attribute, not typed as a label,
+  // so correcting the figure corrects the plan.
+  expect(/45\.20/.test(text), 'entities: the spot height was not shown');
+  expect(/Boundary wall/.test(text), 'entities: the wall was not labelled');
+  expect(
+    (await page.locator('.element--level').count()) > 0,
+    'entities: the level was drawn as a generic dot rather than a cross',
+  );
+  await shot(page, 'entities');
+  await page.close();
+}
+
 // --- Traverse entry ---------------------------------------------------------
 
 {

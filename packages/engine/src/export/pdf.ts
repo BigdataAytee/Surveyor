@@ -36,6 +36,9 @@ const PENS: Readonly<Record<StrokeStyle, Pen>> = {
   water: { width: 0.22, rgb: [0.23, 0.51, 0.96], fill: [0.94, 0.96, 1] },
   vegetation: { width: 0.22, rgb: [0.09, 0.64, 0.29], fill: [0.94, 0.99, 0.95] },
   easement: { width: 0.22, rgb: [0.49, 0.23, 0.93], dash: [5, 2] },
+  wall: { width: 0.35, rgb: [0.22, 0.25, 0.32] },
+  utility: { width: 0.18, rgb: [0.03, 0.57, 0.7], dash: [6, 2] },
+  annotation: { width: 0.18, rgb: [0.07, 0.09, 0.15] },
   'point-marker': { width: 0.25, rgb: [0.07, 0.09, 0.15] },
 };
 

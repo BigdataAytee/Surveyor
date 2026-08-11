@@ -61,8 +61,16 @@ export function ToolsSheet({ onClose }: { readonly onClose: () => void }) {
     }
     for (const feature of state.model.siteFeatures) {
       if (!wanted.has(feature.id)) continue;
-      if (feature.geometry.kind === 'point') vertices.push(feature.geometry.at);
-      else vertices.push(...feature.geometry.vertices);
+      // A circle contributes its extremes rather than its centre, so a
+      // transform about the selection's middle accounts for its whole spread.
+      const geometry = feature.geometry;
+      if (geometry.kind === 'point') vertices.push(geometry.at);
+      else if (geometry.kind === 'circle' || geometry.kind === 'arc') {
+        vertices.push(
+          { easting: geometry.centre.easting - geometry.radius, northing: geometry.centre.northing - geometry.radius },
+          { easting: geometry.centre.easting + geometry.radius, northing: geometry.centre.northing + geometry.radius },
+        );
+      } else vertices.push(...geometry.vertices);
     }
     return vertices;
   }

@@ -342,6 +342,12 @@ function featureGeometry(feature: SiteFeature): SubjectGeometry {
     }
     case 'point':
       return { kind: 'point', at: feature.geometry.at };
+    case 'circle':
+      // Labelled at its centre, which is the only place on a circle that is
+      // not on its edge.
+      return { kind: 'point', at: feature.geometry.centre };
+    case 'arc':
+      return { kind: 'point', at: feature.geometry.centre };
   }
 }
 

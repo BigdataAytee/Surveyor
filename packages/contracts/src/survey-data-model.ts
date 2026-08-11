@@ -91,19 +91,50 @@ export interface BoundaryRing {
   readonly area?: number;
 }
 
+/**
+ * What a thing on the site is.
+ *
+ * The kind drives how it is drawn, what it is called on the plan, and which
+ * legend entry it earns — so it is a closed list rather than free text. Adding
+ * one is a deliberate act: the compiler then requires a stroke style and a
+ * label template for it, which is what stops a new kind from appearing on a
+ * plan as an unexplained grey line.
+ */
 export type FeatureKind =
   | 'building'
   | 'road'
+  | 'driveway'
   | 'fence'
+  | 'wall'
+  | 'gate'
   | 'access'
   | 'water'
   | 'vegetation'
+  | 'tree'
+  | 'utility'
   | 'easement'
+  /** A spot height: a measured level at a point, carrying its elevation. */
+  | 'level'
+  /** A benchmark or datum reference the levels are measured from. */
+  | 'benchmark'
+  /** Free text the surveyor placed on the drawing. */
+  | 'annotation'
   | 'other';
+
+/**
+ * Whether a feature is there now or is being proposed.
+ *
+ * A site plan routinely shows both, and confusing them is the kind of error
+ * that gets a plan rejected — so it is a field rather than a naming
+ * convention in the label.
+ */
+export type FeatureStatus = 'existing' | 'proposed' | 'removed';
 
 export interface SiteFeature {
   readonly id: FeatureId;
   readonly type: FeatureKind;
+  /** Existing unless stated; a plan that does not say is read as existing. */
+  readonly status?: FeatureStatus;
   readonly geometry: FeatureGeometry;
   readonly attributes: Readonly<Record<string, string | number | boolean>>;
   readonly provenance: Provenance;
@@ -112,7 +143,24 @@ export interface SiteFeature {
 export type FeatureGeometry =
   | { readonly kind: 'polygon'; readonly vertices: readonly Coordinates[] }
   | { readonly kind: 'polyline'; readonly vertices: readonly Coordinates[] }
-  | { readonly kind: 'point'; readonly at: Coordinates };
+  | { readonly kind: 'point'; readonly at: Coordinates }
+  /**
+   * A true circle, kept as centre and radius rather than as vertices.
+   *
+   * A tree canopy or a manhole is a circle, and storing it as a tessellated
+   * polygon would make its radius something you measure off the drawing
+   * instead of something the drawing knows. Tessellation happens at render
+   * time, where the number of segments can suit the zoom.
+   */
+  | { readonly kind: 'circle'; readonly centre: Coordinates; readonly radius: number }
+  /** An arc, as centre, radius and the bearings it runs between. */
+  | {
+      readonly kind: 'arc';
+      readonly centre: Coordinates;
+      readonly radius: number;
+      readonly startBearing: number;
+      readonly endBearing: number;
+    };
 
 export interface SurveyNote {
   readonly id: string;

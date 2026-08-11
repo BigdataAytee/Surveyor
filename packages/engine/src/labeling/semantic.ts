@@ -214,7 +214,36 @@ function featureLabels(
   prefs: LabelPreferences,
 ): LabelSpecification[] {
   const labels: LabelSpecification[] = [];
-  const inside = feature.geometry.kind === 'polygon';
+  const inside = feature.geometry.kind === 'polygon' || feature.geometry.kind === 'circle';
+
+  /*
+   * A level is its number. Naming it as well would print "Spot height 45.20"
+   * on a drawing where the convention is a cross and a figure, so the level
+   * template stands in for the name rather than joining it.
+   */
+  if (feature.type === 'level' || feature.type === 'benchmark') {
+    labels.push({
+      id: `lbl_${feature.id}_level`,
+      subject: { kind: 'feature', featureId: feature.id },
+      role: 'feature-name',
+      content: {
+        mode: 'derived',
+        template: feature.type === 'benchmark' ? 'feature.levelWithName' : 'feature.level',
+        bindings: { feature: { ref: `feature:${feature.id}` } },
+      },
+      anchor: {
+        relation: 'near',
+        keepUpright: true,
+        offsetSteps: 1,
+        preferredOrder: ['near', 'offset', 'leader'],
+      },
+      priority: DEFAULT_PRIORITY['feature-name'],
+      visibility: 'preferred',
+      style: { token: 'label.feature' },
+      provenance: feature.provenance,
+    });
+    return labels;
+  }
 
   if (prefs.featureNames && feature.attributes.name !== undefined) {
     labels.push({

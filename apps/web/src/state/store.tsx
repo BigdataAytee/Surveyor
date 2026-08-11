@@ -219,24 +219,78 @@ function transformModel(
     if (!targets.has(feature.id)) return feature;
     const geometry = feature.geometry;
 
-    if (geometry.kind === 'point') {
-      return {
-        ...feature,
-        geometry: { ...geometry, at: applyTransform([geometry.at], transform, false)[0]! },
-        provenance: { ...feature.provenance, source: 'user-confirmed' as const },
-      };
-    }
     return {
       ...feature,
-      geometry: {
-        ...geometry,
-        vertices: applyTransform(geometry.vertices, transform, geometry.kind === 'polygon'),
-      },
+      geometry: transformGeometry(geometry, transform),
       provenance: { ...feature.provenance, source: 'user-confirmed' as const },
     };
   });
 
   return { ...model, points, siteFeatures };
+}
+
+/**
+ * Transform one feature's geometry, whatever shape it is.
+ *
+ * The circle and arc cases are why this is a function rather than a line: a
+ * circle is stored as a centre and a radius, so scaling it has to scale the
+ * radius too. Transforming only the centre would leave a tree canopy the same
+ * size on a drawing that had been scaled — the geometry would look plausible
+ * and measure wrong, which is the failure this whole layer exists to prevent.
+ */
+function transformGeometry(
+  geometry: SiteFeature['geometry'],
+  transform: Transform,
+): SiteFeature['geometry'] {
+  switch (geometry.kind) {
+    case 'point':
+      return { ...geometry, at: applyTransform([geometry.at], transform, false)[0]! };
+
+    case 'polygon':
+      return { ...geometry, vertices: applyTransform(geometry.vertices, transform, true) };
+
+    case 'polyline':
+      return { ...geometry, vertices: applyTransform(geometry.vertices, transform, false) };
+
+    case 'circle':
+      return {
+        ...geometry,
+        centre: applyTransform([geometry.centre], transform, false)[0]!,
+        radius:
+          transform.kind === 'scale'
+            ? geometry.radius * Math.abs(transform.factor)
+            : geometry.radius,
+      };
+
+    case 'arc':
+      return {
+        ...geometry,
+        centre: applyTransform([geometry.centre], transform, false)[0]!,
+        radius:
+          transform.kind === 'scale'
+            ? geometry.radius * Math.abs(transform.factor)
+            : geometry.radius,
+        // Rotating an arc turns the bearings it runs between; a mirror
+        // reverses the direction it sweeps as well as reflecting them.
+        ...(transform.kind === 'rotate'
+          ? {
+              startBearing: wrapBearing(geometry.startBearing + transform.degrees),
+              endBearing: wrapBearing(geometry.endBearing + transform.degrees),
+            }
+          : {}),
+        ...(transform.kind === 'mirror'
+          ? {
+              startBearing: wrapBearing(-geometry.endBearing),
+              endBearing: wrapBearing(-geometry.startBearing),
+            }
+          : {}),
+      };
+  }
+}
+
+function wrapBearing(degrees: number): number {
+  const wrapped = degrees % 360;
+  return wrapped < 0 ? wrapped + 360 : wrapped;
 }
 
 /** Next free PTn, so drawing after a deletion does not reuse a name. */
@@ -330,10 +384,7 @@ function copyOf(
   return model.siteFeatures
     .filter((feature) => wanted.has(feature.id))
     .map((feature, index) => {
-      const geometry =
-        feature.geometry.kind === 'point'
-          ? { ...feature.geometry, at: translate([feature.geometry.at], by)[0]! }
-          : { ...feature.geometry, vertices: translate(feature.geometry.vertices, by) };
+      const geometry = transformGeometry(feature.geometry, { kind: 'move', by });
 
       return {
         ...feature,
