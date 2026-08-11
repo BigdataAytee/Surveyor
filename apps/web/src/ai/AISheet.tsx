@@ -10,7 +10,7 @@
  * survey data.
  */
 
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 
 import { Button, Card } from '../ui/primitives.js';
 import { SlideUp } from '../ui/motion.js';
@@ -21,12 +21,12 @@ import {
   openingMessage,
   proposeBuilding,
   proposeNote,
-  respond,
   userMessage,
   type AssistantAction,
   type AssistantContext,
   type AssistantMessage,
 } from './assistant.js';
+import { createPlanner } from './planner.js';
 import './ai.css';
 
 export interface AISheetProps {
@@ -47,6 +47,19 @@ export function AISheet({ onOpenPanel }: AISheetProps) {
   const [draft, setDraft] = useState('');
   const [thinking, setThinking] = useState(false);
   const listRef = useRef<HTMLDivElement>(null);
+
+  /**
+   * A model-backed planner only when an endpoint is configured; otherwise the
+   * rule planner. The app is never given a key — only a URL — so there is no
+   * build in which a credential reaches the browser.
+   */
+  const planner = useMemo(
+    () =>
+      createPlanner(import.meta.env.VITE_ASSISTANT_ENDPOINT, (reason) =>
+        console.warn('[assistant] falling back to rules:', reason),
+      ),
+    [],
+  );
 
   // The latest assistant message drives which objects pulse on the canvas.
   const latest = messages[messages.length - 1];
@@ -69,13 +82,14 @@ export function AISheet({ onOpenPanel }: AISheetProps) {
     push(userMessage(trimmed));
     setDraft('');
 
-    // A brief thinking beat only for typed questions — B.4 is explicit that a
-    // typing indicator should not appear for every tiny response.
+    // A thinking indicator only for typed questions — B.4 is explicit that it
+    // should not appear for every tiny response. With a model planner the wait
+    // is real; with rules it is a beat so the reply does not appear mid-keypress.
     setThinking(true);
-    window.setTimeout(() => {
+    void planner.reply(trimmed, ctx).then((message) => {
       setThinking(false);
-      push(respond(trimmed, ctx));
-    }, 420);
+      push(message);
+    });
   }
 
   function runAction(action: AssistantAction): void {

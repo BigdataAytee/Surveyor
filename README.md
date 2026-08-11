@@ -71,6 +71,10 @@ reports real progress rather than animating a timer.
   works out the delimiter, the header and the column roles, and scores itself.
   Where it genuinely cannot tell — easting/northing order with no headings — it
   asks rather than picking the commoner convention.
+- **Traverse entry** takes a deed-style boundary as bearings and distances.
+  Closure is computed and shown while you type, because on a traverse — unlike a
+  coordinate boundary, which closes by construction — that number decides
+  whether the survey is usable.
 - **Work is saved** to local storage as it changes, debounced. Pending AI
   suggestions deliberately do not survive a reload.
 
@@ -79,20 +83,45 @@ reports real progress rather than animating a timer.
 `apps/web/src/ai/assistant.ts` decides intent: what to say, what to offer, and
 what to propose. It proposes geometry as ordinary survey data tagged
 `ai-suggested`; the engines derive every dimension, area and label from it once a
-human accepts. The planner is deterministic and rule-based — swapping it for a
-language model changes only that file, because the intent vocabulary, the
-proposal shapes and the trust loop are the contract.
+human accepts.
+
+Two planners implement that interface. The default is rule-based and needs no
+credentials. A language model can drive it instead:
+
+```bash
+ANTHROPIC_API_KEY=... npm run assistant --workspace @surveyor/web
+VITE_ASSISTANT_ENDPOINT=http://127.0.0.1:8787/assistant npm run dev
+```
+
+The app is given a **URL, never a key** — this is a browser application, and a
+key shipped to the browser is a key published to every user, so the model is
+reached through an endpoint the operator hosts (`apps/web/server/assistant.mjs`
+is a working reference).
+
+The model is bounded twice. A strict tool schema
+(`apps/web/src/ai/intent-schema.ts`) enumerates the intent vocabulary, and
+nothing in it accepts a number — so a model cannot express a coordinate,
+dimension, or bearing. Then `validateProposal` re-derives every action from
+scratch and rejects whatever it cannot account for, checking `show` targets
+against the ids actually in the survey. The schema is the seatbelt; the
+validator is the crumple zone. A rejected reply falls back to the rule planner,
+so the assistant degrades rather than going silent.
 
 ## Testing
 
 ```bash
-npm test                                    # 101 tests across contracts and engine
+npm test                                    # 119 tests across contracts, engine and web
 npm run smoke --workspace @surveyor/web     # browser flows (needs a preview server)
 ```
 
 The smoke test drives the trust loop, the export gate, the drawing and measuring
-tools, import and persistence in a real browser, and fails on console errors,
-on-screen label collisions, or horizontal overflow at any breakpoint.
+tools, import, traverse entry and persistence in a real browser, and fails on
+console errors, on-screen label collisions, or horizontal overflow at any
+breakpoint.
+
+The web suite (`apps/web/test/intent-schema.test.ts`) treats model output as
+hostile input: off-vocabulary actions, invented element ids, malformed replies,
+oversized replies, transport failures and hangs.
 
 ```bash
 npm run build --workspace @surveyor/web
@@ -102,13 +131,17 @@ npm run smoke --workspace @surveyor/web
 
 ## Status
 
-The pipeline, the exporters and the workspace are built and working end to end.
+The pipeline, the exporters, the workspace and the model seam are built and
+working end to end. Points, pasted tables and deed traverses all enter; the
+engines compute; the plan exports to PDF, DXF and SVG once every value is
+confirmed.
 
-One thing is deliberately unfinished: the assistant's planner is rule-based
-rather than a language model, because no model is wired up here. The seam is
-exact — `apps/web/src/ai/assistant.ts` is the only file that would change, and
-an LLM would get the authority the rule planner has, which is none over
-coordinates or survey values.
+The assistant ships with the rule planner as its default because that needs no
+credentials, not because the model path is unfinished. Both planners implement
+one interface, and a language model gets exactly the authority the rule planner
+has — which is none over coordinates or survey values. Running against a real
+model needs only an endpoint URL; what that endpoint returns is validated by
+tests that require no key.
 
 Text extraction (`packages/engine/src/document.ts`) infers structure and scores
 its confidence for pasted and uploaded tables. Vision/OCR plugs into the same

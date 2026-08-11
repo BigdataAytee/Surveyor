@@ -398,3 +398,30 @@
   font-size: var(--text-micro);
   color: var(--ink-tertiary);
 }
+
+/* --- Traverse legs ------------------------------------------------------ */
+
+.legs {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  list-style: none;
+  padding: 0;
+  width: 100%;
+}
+
+.legs__item {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--space-3);
+  padding: var(--space-2) var(--space-3);
+  border-radius: var(--radius-sm);
+  background: var(--surface-sunken);
+  font-size: var(--text-micro);
+}
+
+.legs__value {
+  color: var(--ink-secondary);
+  white-space: nowrap;
+}

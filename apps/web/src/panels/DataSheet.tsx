@@ -28,10 +28,11 @@ import {
 } from '../ui/primitives.js';
 import { FadeIn } from '../ui/motion.js';
 import { useProject } from '../state/store.js';
+import { ObservationEditor } from './ObservationEditor.js';
 import { EXPLANATIONS } from '../ai/assistant.js';
 import './panels.css';
 
-type Mode = 'list' | 'paste';
+type Mode = 'list' | 'paste' | 'traverse';
 
 /** Matches the Validation Engine's threshold, so the two agree on "unsure". */
 const LOW_CONFIDENCE = 0.85;
@@ -61,6 +62,7 @@ export function DataSheet({ onClose }: { readonly onClose: () => void }) {
           options={[
             { value: 'list', label: 'Points' },
             { value: 'paste', label: 'Paste table' },
+            { value: 'traverse', label: 'Traverse' },
           ]}
         />
         <span className="panel__count numeric">
@@ -68,7 +70,9 @@ export function DataSheet({ onClose }: { readonly onClose: () => void }) {
         </span>
       </div>
 
-      {mode === 'paste' ? (
+      {mode === 'traverse' ? (
+        <ObservationEditor onDone={() => setMode('list')} />
+      ) : mode === 'paste' ? (
         <PasteImporter onDone={() => setMode('list')} />
       ) : state.model.points.length === 0 ? (
         <EmptyState

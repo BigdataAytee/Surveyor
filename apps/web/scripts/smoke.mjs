@@ -279,6 +279,41 @@ for (const [name, viewport] of [
   await page.close();
 }
 
+// --- Traverse entry ---------------------------------------------------------
+
+{
+  const page = await open('traverse', PHONE);
+  await page.getByRole('button', { name: 'Data' }).click();
+  await page.waitForTimeout(400);
+  await page.getByRole('tab', { name: 'Traverse' }).click();
+  await page.waitForTimeout(300);
+
+  // A deed traverse that closes exactly: 30 x 20 walked round.
+  await page.locator('.importer__input').fill(
+    [
+      'PT1 PT2 N 90°00\'00" E 30.00',
+      'PT2 PT3 N 00°00\'00" E 20.00',
+      'PT3 PT4 S 90°00\'00" W 30.00',
+      'PT4 PT1 S 00°00\'00" E 20.00',
+    ].join('\n'),
+  );
+  await page.waitForTimeout(500);
+
+  const text = (await page.textContent('body')) ?? '';
+  expect(/4 legs read/.test(text), 'traverse: legs not counted');
+  expect(/Closure/.test(text), 'traverse: closure not shown while typing');
+  expect(/0\.000 m/.test(text), 'traverse: a closing traverse should report no misclosure');
+  await shot(page, 'traverse');
+
+  await page.getByRole('button', { name: 'Use this traverse' }).click();
+  await page.waitForTimeout(700);
+
+  const after = (await page.textContent('body')) ?? '';
+  expect(/600 m²/.test(after), 'traverse: expected a 600 m² parcel after applying');
+  await shot(page, 'traverse-applied');
+  await page.close();
+}
+
 // --- Persistence ------------------------------------------------------------
 
 {
