@@ -371,6 +371,72 @@ for (const [name, viewport] of [
   await page.close();
 }
 
+// --- Starting a new project -------------------------------------------------
+
+{
+  // This used to be at the foot of the Layers panel, under a toggle for the
+  // grid, where nobody found it.
+  const page = await open('new-project', PHONE);
+
+  const projectButton = page.getByRole('button', { name: 'Project settings and new project' });
+  expect(await projectButton.isVisible(), 'new project: no way into the project from the title bar');
+  await projectButton.click();
+  await page.waitForTimeout(400);
+
+  expect(
+    await page.getByLabel('Site name or address').locator('visible=true').first().isVisible(),
+    'new project: the site cannot be named',
+  );
+  await shot(page, 'project');
+
+  // Two taps, because it replaces the survey.
+  await page.getByRole('button', { name: 'Start a new project' }).locator('visible=true').first().click();
+  await page.waitForTimeout(300);
+  const confirm = page.getByRole('button', { name: 'Yes, start a new project' }).locator('visible=true').first();
+  expect(await confirm.isVisible(), 'new project: destructive action was not confirmed');
+  await confirm.click();
+  await page.waitForTimeout(700);
+
+  expect(
+    (await page.locator('.element--point').count()) === 0,
+    'new project: the old survey is still on the drawing',
+  );
+  await shot(page, 'project-empty');
+  await page.close();
+}
+
+// --- The assistant as a way through the app ---------------------------------
+
+{
+  const page = await open('guidance', PHONE);
+  await page.getByRole('button', { name: 'Assistant' }).click();
+  await page.waitForTimeout(400);
+
+  const input = page.getByLabel('Ask the assistant, or paste survey data').locator('visible=true').first();
+  const send = page.getByRole('button', { name: 'Send' }).locator('visible=true').first();
+
+  async function ask(question) {
+    await input.fill(question);
+    await send.click();
+    await page.waitForTimeout(900);
+    return page.locator('.ai__message--assistant').locator('visible=true').last().innerText();
+  }
+
+  // The report this exists for: asked to start a new project, the assistant
+  // used to answer about area and dimensions.
+  const answer = await ask('create a new project');
+  expect(/new project/i.test(answer), `guidance: no help starting a project — got "${answer.slice(0, 80)}"`);
+  expect(
+    await page.getByRole('button', { name: 'Start a new project' }).locator('visible=true').first().isVisible(),
+    'guidance: told how to start a project but not offered the button',
+  );
+
+  const dataAnswer = await ask('how do I get my points in?');
+  expect(/paste|photograph|Data/i.test(dataAnswer), 'guidance: no help getting data in');
+  await shot(page, 'guidance');
+  await page.close();
+}
+
 // --- Traverse entry ---------------------------------------------------------
 
 {

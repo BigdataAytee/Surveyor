@@ -32,9 +32,26 @@ export type Intent =
   | { readonly kind: 'suggest-building'; readonly label: string }
   | { readonly kind: 'suggest-note' }
   | { readonly kind: 'show'; readonly elementId: string }
-  | { readonly kind: 'open'; readonly panel: 'data' | 'validation' | 'export' | 'layers' }
+  | { readonly kind: 'open'; readonly panel: PanelName }
   | { readonly kind: 'explain'; readonly topic: ExplainTopic }
+  /** Walk the user through doing something themselves. */
+  | { readonly kind: 'guide'; readonly task: TaskName }
+  /** Switch the canvas tool, so "let me measure that" can just do it. */
+  | { readonly kind: 'tool'; readonly tool: 'select' | 'draw' | 'measure' }
+  | { readonly kind: 'new-project' }
+  /**
+   * The second half of starting a new project, after the user has been told
+   * what it replaces.
+   *
+   * Deliberately absent from the model's vocabulary (`ACTION_KINDS` in
+   * intent-schema.ts). `new-project` asks; this one acts. A model that could
+   * emit this could skip the question, and the confirmation is the only thing
+   * standing between a misread message and someone's survey.
+   */
+  | { readonly kind: 'confirm-new-project' }
   | { readonly kind: 'none' };
+
+export type PanelName = 'data' | 'validation' | 'export' | 'layers' | 'project';
 
 export type ExplainTopic = 'crs' | 'closure' | 'provenance' | 'area' | 'scale';
 
@@ -125,11 +142,14 @@ export function openingMessage(ctx: AssistantContext): AssistantMessage {
       id: nextId('msg'),
       role: 'assistant',
       text:
-        'Let’s start your site plan. Add your survey points and I’ll work out ' +
-        'the boundary, area and dimensions for you.',
+        'Let’s start your site plan. Paste your points straight into this box, ' +
+        'photograph a note with the camera button, or add them by hand — then ' +
+        'I’ll work out the boundary, area and dimensions for you. Ask me how to ' +
+        'do anything in here and I’ll walk you through it.',
       actions: [
         { id: nextId('act'), label: 'Add points', intent: { kind: 'open', panel: 'data' }, tone: 'primary' },
-        { id: nextId('act'), label: 'What is a coordinate system?', intent: { kind: 'explain', topic: 'crs' } },
+        { id: nextId('act'), label: 'Draw the boundary', intent: { kind: 'guide', task: 'draw-boundary' } },
+        { id: nextId('act'), label: 'What can you do?', intent: { kind: 'none' } },
       ],
     };
   }
@@ -301,23 +321,291 @@ const RULES: readonly Rule[] = [
   },
 ];
 
+// ---------------------------------------------------------------------------
+// What the app can do (B.4 — the assistant as a way through the interface)
+// ---------------------------------------------------------------------------
+
+export type TaskName =
+  | 'new-project'
+  | 'name-site'
+  | 'add-points'
+  | 'paste-table'
+  | 'photograph-note'
+  | 'traverse'
+  | 'enter-data'
+  | 'draw-boundary'
+  | 'measure'
+  | 'add-building'
+  | 'add-note'
+  | 'labels'
+  | 'review'
+  | 'export'
+  | 'undo';
+
+/**
+ * Every action the app can perform, in the words someone would ask for it.
+ *
+ * This exists because the assistant sits where a menu would, and an assistant
+ * that cannot answer "how do I start a new project" is worse than a menu. The
+ * failure it fixes was literal: nothing in the rule table mentioned projects at
+ * all, so asking about one fell through to a generic list of unrelated things.
+ *
+ * Each entry gives the steps *and*, where the app can simply do it, the button
+ * that does. Being told where a control is beats being told nothing; having it
+ * opened for you beats both.
+ */
+export interface TaskGuide {
+  readonly task: TaskName;
+  readonly title: string;
+  readonly match: RegExp;
+  readonly steps: readonly string[];
+  readonly action?: { readonly label: string; readonly intent: Intent };
+}
+
+export const TASKS: readonly TaskGuide[] = [
+  {
+    task: 'new-project',
+    title: 'Start a new project',
+    match: /\b(new|another|start|create|begin|fresh|blank|empty|different|second)\b.{0,20}\b(project|plan|survey|site|job|drawing|one)\b|\bstart (over|again)\b|\bclear (everything|it all|the (plan|drawing))\b/i,
+    steps: [
+      'Tap the site name at the top of the screen to open Project.',
+      'Choose “Start a new project”, then confirm.',
+      'Your current work is replaced, but Undo still brings it back.',
+    ],
+    action: { label: 'Start a new project', intent: { kind: 'new-project' } },
+  },
+  {
+    task: 'name-site',
+    title: 'Name the site',
+    match: /\b(name|rename|title|address|call)\b.{0,20}\b(site|project|plan|drawing|it)\b|\bwhat.{0,10}(it|this) called\b/i,
+    steps: [
+      'Tap the site name at the top of the screen.',
+      'Type the address. It appears in the title block on the exported plan.',
+    ],
+    action: { label: 'Open Project', intent: { kind: 'open', panel: 'project' } },
+  },
+  {
+    task: 'add-points',
+    title: 'Enter coordinates by hand',
+    match: /\b(add|enter|type|input|key ?in|put in)\b.{0,20}\b(point|points|coordinate|coordinates|corner|corners|easting|northing)\b/i,
+    steps: [
+      'Open Data from the bar at the bottom.',
+      'Stay on Points and tap “Add point”.',
+      'Type the easting and northing for each corner.',
+    ],
+    action: { label: 'Open Data', intent: { kind: 'open', panel: 'data' } },
+  },
+  {
+    task: 'paste-table',
+    title: 'Paste or import a table',
+    match: /\b(paste|import|upload|load|csv|spreadsheet|excel|data ?collector|total ?station|file)\b/i,
+    steps: [
+      'Paste your table straight into this box — I read it here.',
+      'Or open Data, choose “Paste table”, and paste or upload a .csv there.',
+      'Either way you see what was read before anything is used.',
+    ],
+    action: { label: 'Open Data', intent: { kind: 'open', panel: 'data' } },
+  },
+  {
+    task: 'photograph-note',
+    title: 'Read a photographed note',
+    // `photo\w*` rather than `photo`, because people write "photographed" and
+    // "photos" — and the next task along matches the word "note", so a near
+    // miss here does not fail, it answers the wrong question.
+    match: /\b(photo\w*|pic|picture|camera|snap\w*|scan\w*|image|handwritten|field ?book|notebook)\b/i,
+    steps: [
+      'Tap the camera button beside this box.',
+      'Take a straight, close shot of the table of coordinates.',
+      'The photo is transcribed and shown next to the numbers so you can check them.',
+    ],
+  },
+  {
+    task: 'traverse',
+    title: 'Enter a traverse',
+    match: /\b(traverse|bearing|bearings|deed|metes|distance and bearing|dms)\b/i,
+    steps: [
+      'Open Data and choose Traverse.',
+      'Type one leg per line: from, to, bearing, distance.',
+      'Closure is worked out as you type, because on a traverse that is the number that decides whether the survey is usable.',
+    ],
+    action: { label: 'Open Data', intent: { kind: 'open', panel: 'data' } },
+  },
+  {
+    // Sits after the four specific routes so "how do I paste a table" still
+    // gets the paste answer. This catches the question underneath all of them,
+    // which people ask far more often: "how do I get my points in?"
+    task: 'enter-data',
+    title: 'Getting your points in',
+    match: /\b(get\w*|bring|put|load|entering|capture|record|start with)\b.{0,25}\b(data|points|coordinates|survey|numbers|measurements|figures)\b|\bdata in\b|\bpoints in\b/i,
+    steps: [
+      'Paste a table straight into this box — that is the quickest.',
+      'Or photograph a note with the camera button beside it.',
+      'Or open Data to type coordinates by hand, or enter a traverse of bearings and distances.',
+      'Whichever you use, you see what was read before any of it is used.',
+    ],
+    action: { label: 'Open Data', intent: { kind: 'open', panel: 'data' } },
+  },
+  {
+    task: 'draw-boundary',
+    title: 'Draw the boundary',
+    match: /\b(draw|sketch|trace|tap out|plot)\b.{0,20}\b(boundary|outline|shape|corner|corners|parcel|plot)\b|\bdraw(ing)? tool\b/i,
+    steps: [
+      'Choose Draw in the toolbar under the drawing.',
+      'Tap each corner. A new corner joins the edge it sits nearest, so the shape does not fold over.',
+      'Switch back to Select when you are done.',
+    ],
+    action: { label: 'Switch to Draw', intent: { kind: 'tool', tool: 'draw' } },
+  },
+  {
+    task: 'measure',
+    title: 'Measure between two points',
+    match: /\b(measure|distance between|how far|length between|check the distance)\b/i,
+    steps: [
+      'Choose Measure in the toolbar under the drawing.',
+      'Tap two points. The bearing and distance come from the same COGO call the plan’s dimensions use.',
+    ],
+    action: { label: 'Switch to Measure', intent: { kind: 'tool', tool: 'measure' } },
+  },
+  {
+    task: 'add-building',
+    title: 'Add a building',
+    match: /\b(building|house|garage|shed|outbuilding|extension|structure)\b/i,
+    steps: [
+      'Ask me for one — “add a garage” — and I will place a proposal on the drawing.',
+      'It stays a proposal, drawn in purple, until you accept it.',
+      'The engines work out its dimensions and area once you do; I never write those.',
+    ],
+    action: { label: 'Propose a building', intent: { kind: 'suggest-building', label: 'Building' } },
+  },
+  {
+    task: 'add-note',
+    title: 'Add a note to the plan',
+    match: /\b(note|notes|annotation|annotate|caption|remark|text on the plan)\b/i,
+    steps: [
+      'Ask me for a note and I will draft one.',
+      'It appears as a proposal; accepting it puts it in the plan’s notes block.',
+    ],
+    action: { label: 'Draft a note', intent: { kind: 'suggest-note' } },
+  },
+  {
+    task: 'labels',
+    title: 'Show or hide labels and the grid',
+    match: /\b(label|labels|grid|layer|layers|hide|show|declutter|too busy|crowded)\b/i,
+    steps: ['Open Layers from the bar at the bottom.', 'Toggle Labels or Grid.'],
+    action: { label: 'Open Layers', intent: { kind: 'open', panel: 'layers' } },
+  },
+  {
+    task: 'review',
+    title: 'Check the drawing',
+    match: /\b(check|review|validate|validation|problem|problems|wrong|error|warning|ready)\b/i,
+    steps: [
+      'Open Review from the status badge at the top, or from the bar at the bottom.',
+      'Everything found is listed in plain language, with what to do about it.',
+    ],
+    action: { label: 'Open Review', intent: { kind: 'open', panel: 'validation' } },
+  },
+  {
+    task: 'export',
+    title: 'Export the plan',
+    match: /\b(export|pdf|dxf|svg|download|print|share|send|issue)\b/i,
+    steps: [
+      'Open Export from the bar at the bottom.',
+      'Choose PDF, DXF or SVG.',
+      'Anything still marked as a suggestion has to be accepted first — the export is refused while a value on the sheet is one I proposed.',
+    ],
+    action: { label: 'Open Export', intent: { kind: 'open', panel: 'export' } },
+  },
+  {
+    task: 'undo',
+    title: 'Undo a change',
+    match: /\b(undo|redo|revert|go back|mistake|by accident|didn.?t mean)\b/i,
+    steps: [
+      'Use the ↺ and ↻ buttons at the top right.',
+      'Ctrl+Z and Ctrl+Shift+Z work too on a keyboard.',
+    ],
+  },
+];
+
+/** Phrasing that asks how to do something, rather than about the survey. */
+const HOW_TO =
+  /\b(how (do|can|would|should) i|how to|how does one|where (do|is|are|can) i|show me how|guide me|walk me|help me|teach me|can i|is there a way|i want to|i.d like to|i need to|let me)\b/i;
+
+function guideMessage(guide: TaskGuide): AssistantMessage {
+  return {
+    id: nextId('msg'),
+    role: 'assistant',
+    text: [`${guide.title}:`, ...guide.steps.map((step, i) => `${i + 1}. ${step}`)].join('\n'),
+    actions: [
+      ...(guide.action
+        ? [
+            {
+              id: nextId('act'),
+              label: guide.action.label,
+              intent: guide.action.intent,
+              tone: 'primary' as const,
+            },
+          ]
+        : []),
+      { id: nextId('act'), label: 'What else can you do?', intent: { kind: 'none' as const } },
+    ],
+  };
+}
+
+export function findTask(input: string): TaskGuide | undefined {
+  return TASKS.find((guide) => guide.match.test(input));
+}
+
 export function respond(input: string, ctx: AssistantContext): AssistantMessage {
+  // "How do I …" wants the steps; "what is …" wants the answer. Both reach the
+  // same knowledge, in the order that suits the question.
+  const asksHowTo = HOW_TO.test(input);
+
+  if (asksHowTo) {
+    const guide = findTask(input);
+    if (guide) return guideMessage(guide);
+  }
+
   for (const rule of RULES) {
     const match = rule.test.exec(input);
     if (match) return rule.respond(ctx, match);
   }
 
+  const guide = findTask(input);
+  if (guide) return guideMessage(guide);
+
+  return capabilitiesMessage();
+}
+
+/**
+ * What to say when nothing matched.
+ *
+ * The old version named six topics and left the user to guess the wording. The
+ * complaint that produced this one was exact: asked to start a new project, it
+ * replied about area and dimensions. Offering the actual tasks as buttons means
+ * a miss costs one tap rather than another guess.
+ */
+export function capabilitiesMessage(): AssistantMessage {
   return {
     id: nextId('msg'),
     role: 'assistant',
     text:
-      'I can help with the boundary, area, dimensions, buildings, notes and ' +
-      'exporting. Try asking about the area, or ask me to add a garage.',
+      'I can walk you through anything in here, or just do it. Getting data in: ' +
+      'type coordinates, paste a table, photograph a note, or enter a traverse. ' +
+      'On the drawing: draw the boundary, measure, add a building or a note. ' +
+      'Then check it and export it. Ask in your own words — “how do I start a ' +
+      'new project” works.',
     actions: [
-      { id: nextId('act'), label: 'What’s the area?', intent: { kind: 'none' } },
-      { id: nextId('act'), label: 'Review the drawing', intent: { kind: 'open', panel: 'validation' } },
+      { id: nextId('act'), label: 'Start a new project', intent: { kind: 'new-project' }, tone: 'primary' },
+      { id: nextId('act'), label: 'Get my data in', intent: { kind: 'guide', task: 'paste-table' } },
+      { id: nextId('act'), label: 'Draw the boundary', intent: { kind: 'guide', task: 'draw-boundary' } },
+      { id: nextId('act'), label: 'Check the drawing', intent: { kind: 'open', panel: 'validation' } },
     ],
   };
+}
+
+export function taskMessage(task: TaskName): AssistantMessage {
+  const guide = TASKS.find((entry) => entry.task === task);
+  return guide ? guideMessage(guide) : capabilitiesMessage();
 }
 
 export function userMessage(text: string): AssistantMessage {

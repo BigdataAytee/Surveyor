@@ -41,13 +41,46 @@
   min-width: 0;
 }
 
+/* A button, because it opens the project — but it still reads as the title,
+   so it keeps the type and loses the chrome. */
 .topbar__title {
+  display: flex;
+  align-items: baseline;
+  gap: var(--space-1);
+  min-width: 0;
+  max-width: 100%;
+  padding: 0;
+  border: none;
+  background: none;
+  color: inherit;
+  font: inherit;
   font-size: var(--text-subheading);
   font-weight: var(--weight-semibold);
   line-height: var(--leading-tight);
+  text-align: left;
+  cursor: pointer;
+}
+
+.topbar__title > span:first-child {
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
+}
+
+.topbar__title-chevron {
+  flex: none;
+  font-size: var(--text-caption);
+  color: var(--ink-tertiary);
+}
+
+.topbar__title:hover .topbar__title-chevron {
+  color: var(--ink);
+}
+
+.topbar__title:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 3px;
+  border-radius: var(--radius-sm);
 }
 
 .topbar__right {

@@ -63,6 +63,9 @@ reports real progress rather than animating a timer.
 
 ### Working in the app
 
+- **The site name in the title bar** opens Project: what the site is called,
+  which jurisdiction's rules it is drawn under, and starting a new one. Starting
+  over asks twice, and Undo still reaches back past it.
 - **Select / Draw / Measure** (B.3). Draw places boundary corners by tapping;
   a new corner is inserted into the edge it sits nearest, so the shape does not
   fold over itself. Measure reports bearing and distance between two taps,
@@ -92,6 +95,15 @@ reports real progress rather than animating a timer.
 what to propose. It proposes geometry as ordinary survey data tagged
 `ai-suggested`; the engines derive every dimension, area and label from it once a
 human accepts.
+
+It is also the way through the interface. `TASKS` in that file is every action
+the app can perform, written in the words someone would ask for it, with the
+steps and — where the app can simply do it — the button that does. Ask "how do I
+start a new project" and you get the steps and the button; ask "how do I measure
+that" and it puts you in the tool. The one thing it cannot do is confirm a
+destructive action on your behalf: `new-project` opens the question,
+`confirm-new-project` answers it, and only the second one is missing from the
+vocabulary a model shares.
 
 Two planners implement that interface. The default is rule-based and needs no
 credentials. A language model can drive it instead:
@@ -127,14 +139,15 @@ so the assistant degrades rather than going silent.
 ## Testing
 
 ```bash
-npm test                                    # 144 tests across contracts, engine and web
+npm test                                    # 154 tests across contracts, engine and web
 npm run smoke --workspace @surveyor/web     # browser flows (needs a preview server)
 ```
 
 The smoke test drives the trust loop, the export gate, the drawing and measuring
-tools, import, a messy paste, pasting into the assistant, traverse entry and
-persistence in a real browser, and fails on console errors, on-screen label
-collisions, or horizontal overflow at any breakpoint.
+tools, import, a messy paste, pasting into the assistant, starting a new
+project, asking the assistant for help, traverse entry and persistence in a real
+browser, and fails on console errors, on-screen label collisions, or horizontal
+overflow at any breakpoint.
 
 The web suites treat model output as hostile input — off-vocabulary actions,
 invented element ids, malformed and oversized replies, transport failures, hangs,

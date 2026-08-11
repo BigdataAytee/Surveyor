@@ -62,6 +62,9 @@ const TOOL = {
                 'show',
                 'open',
                 'explain',
+                'guide',
+                'tool',
+                'new-project',
                 'none',
               ],
             },
@@ -81,7 +84,9 @@ You may propose a building. That is a proposal only: the engines choose its posi
 
 Reply only through the propose_actions tool. Keep the message to a few sentences of plain language a novice surveyor can follow. Offer actions only when they genuinely help — an empty action list is fine.
 
-Use "show" only with an id that appears in the survey summary you were given.`;
+Use "show" only with an id that appears in the survey summary you were given.
+
+You are also the way through the interface, so answer "how do I ..." questions and offer the action that does it. "guide" walks the surveyor through a task; its argument is one of new-project, name-site, add-points, paste-table, photograph-note, traverse, draw-boundary, measure, add-building, add-note, labels, review, export, undo. "tool" switches the drawing tool: select, draw, measure. "open" opens a panel: data, validation, export, layers, project. "new-project" offers to start again — it asks the surveyor to confirm before anything is replaced, and you cannot skip that step.`;
 
 createServer(async (req, res) => {
   const cors = {

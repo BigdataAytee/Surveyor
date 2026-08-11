@@ -16,17 +16,19 @@ import { looksLikeSurveyData } from '@surveyor/engine';
 
 import { Button, Card } from '../ui/primitives.js';
 import { SlideUp } from '../ui/motion.js';
-import { useProject } from '../state/store.js';
+import { EMPTY_MODEL, useProject } from '../state/store.js';
 import type { Suggestion } from '../state/store.js';
 import {
   explainMessage,
   openingMessage,
   proposeBuilding,
   proposeNote,
+  taskMessage,
   userMessage,
   type AssistantAction,
   type AssistantContext,
   type AssistantMessage,
+  type PanelName,
 } from './assistant.js';
 import { createPlanner } from './planner.js';
 import { ExtractionCard } from './ExtractionCard.js';
@@ -34,10 +36,12 @@ import { readNoteImage } from './vision.js';
 import './ai.css';
 
 export interface AISheetProps {
-  readonly onOpenPanel: (panel: 'data' | 'validation' | 'export' | 'layers') => void;
+  readonly onOpenPanel: (panel: PanelName) => void;
+  /** Lets the assistant put the user in a tool rather than describe where it is. */
+  readonly onSelectTool: (tool: 'select' | 'draw' | 'measure') => void;
 }
 
-export function AISheet({ onOpenPanel }: AISheetProps) {
+export function AISheet({ onOpenPanel, onSelectTool }: AISheetProps) {
   const { state, dispatch, pipeline } = useProject();
   const ctx: AssistantContext = {
     model: state.model,
@@ -201,6 +205,61 @@ export function AISheet({ onOpenPanel }: AISheetProps) {
         return;
       case 'explain':
         push(explainMessage(intent.topic));
+        return;
+      case 'guide':
+        push(taskMessage(intent.task));
+        return;
+      case 'tool':
+        // Doing it beats describing it: the assistant can put the user in the
+        // right tool rather than telling them where the toolbar is.
+        onSelectTool(intent.tool);
+        push({
+          id: `msg_${Date.now()}`,
+          role: 'assistant',
+          text:
+            intent.tool === 'draw'
+              ? 'You’re in the drawing tool now — tap each corner of the boundary.'
+              : intent.tool === 'measure'
+                ? 'Measure is on. Tap two points and I’ll give you the bearing and distance between them.'
+                : 'Back to selecting.',
+        });
+        return;
+      case 'new-project': {
+        // Destructive, so it asks rather than acts. Undo reaches back past it
+        // either way, and saying so is what makes confirming reasonable.
+        const hasWork = state.model.points.length > 0 || state.model.siteFeatures.length > 0;
+        if (!hasWork) {
+          dispatch({ type: 'set-model', model: EMPTY_MODEL });
+          push({
+            id: `msg_${Date.now()}`,
+            role: 'assistant',
+            text: 'Done — this is a fresh project. Paste your points in, or tell me how you’d like to start.',
+          });
+          return;
+        }
+        push({
+          id: `msg_${Date.now()}`,
+          role: 'assistant',
+          text: `This project has ${state.model.points.length} points and ${state.model.siteFeatures.length} features on it. Starting a new one replaces them — Undo brings them back if you change your mind.`,
+          actions: [
+            {
+              id: `act_${Date.now()}`,
+              label: 'Start a new project',
+              intent: { kind: 'confirm-new-project' },
+              tone: 'primary',
+            },
+            { id: `act_${Date.now()}_k`, label: 'Keep this one', intent: { kind: 'none' } },
+          ],
+        });
+        return;
+      }
+      case 'confirm-new-project':
+        dispatch({ type: 'set-model', model: EMPTY_MODEL });
+        push({
+          id: `msg_${Date.now()}`,
+          role: 'assistant',
+          text: 'Started a new project. Paste your points in, photograph a note, or ask me how to do anything in here.',
+        });
         return;
       case 'show':
         dispatch({ type: 'highlight', id: intent.elementId });

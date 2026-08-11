@@ -25,25 +25,45 @@
 
 import type { SurveyDataModel } from '@surveyor/contracts';
 
-import { EXPLANATIONS, type ExplainTopic, type Intent } from './assistant.js';
+import {
+  EXPLANATIONS,
+  TASKS,
+  type ExplainTopic,
+  type Intent,
+  type TaskName,
+} from './assistant.js';
 
 // ---------------------------------------------------------------------------
 // Vocabulary
 // ---------------------------------------------------------------------------
 
+/**
+ * What a model is allowed to propose.
+ *
+ * `guide`, `tool` and `new-project` are here because an assistant that cannot
+ * help you work the app is not much of an assistant — but note what is *not*
+ * here: `confirm-new-project`. `new-project` opens the question of replacing
+ * the user's work; only a tap answers it. A model that could emit the
+ * confirmation could destroy a survey by misreading a sentence.
+ */
 export const ACTION_KINDS = [
   'suggest-building',
   'suggest-note',
   'show',
   'open',
   'explain',
+  'guide',
+  'tool',
+  'new-project',
   'none',
 ] as const;
 
 export type ActionKind = (typeof ACTION_KINDS)[number];
 
-export const PANELS = ['data', 'validation', 'export', 'layers'] as const;
+export const PANELS = ['data', 'validation', 'export', 'layers', 'project'] as const;
 export const EXPLAIN_TOPICS = Object.keys(EXPLANATIONS) as ExplainTopic[];
+export const TOOLS = ['select', 'draw', 'measure'] as const;
+export const TASK_NAMES = TASKS.map((guide) => guide.task);
 
 /** Free-text label length cap, so a label cannot become a wall of prose. */
 const MAX_LABEL = 40;
@@ -109,7 +129,9 @@ export const PROPOSE_ACTIONS_TOOL = {
                 'For "suggest-building", the building name. For "show", the ' +
                 'id of an object already on the drawing. For "open", one of ' +
                 `${PANELS.join(', ')}. For "explain", one of ` +
-                `${EXPLAIN_TOPICS.join(', ')}. Otherwise an empty string.`,
+                `${EXPLAIN_TOPICS.join(', ')}. For "guide", one of ` +
+                `${TASK_NAMES.join(', ')}. For "tool", one of ` +
+                `${TOOLS.join(', ')}. Otherwise an empty string.`,
             },
           },
         },
@@ -254,6 +276,21 @@ function toIntent(
       return (EXPLAIN_TOPICS as readonly string[]).includes(argument)
         ? { ok: true, intent: { kind: 'explain', topic: argument as ExplainTopic } }
         : { ok: false, reason: `There is nothing to explain about "${argument}".` };
+
+    case 'guide':
+      return (TASK_NAMES as readonly string[]).includes(argument)
+        ? { ok: true, intent: { kind: 'guide', task: argument as TaskName } }
+        : { ok: false, reason: `There is no "${argument}" task to walk through.` };
+
+    case 'tool':
+      return (TOOLS as readonly string[]).includes(argument)
+        ? { ok: true, intent: { kind: 'tool', tool: argument as (typeof TOOLS)[number] } }
+        : { ok: false, reason: `There is no "${argument}" tool.` };
+
+    case 'new-project':
+      // Opens the question; it does not answer it. The confirmation is a tap
+      // the user makes, and it has no representation in this vocabulary.
+      return { ok: true, intent: { kind: 'new-project' } };
 
     case 'show':
       return knownElementIds(model).has(argument)

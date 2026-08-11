@@ -88,7 +88,17 @@ export type Action =
   | { type: 'update-point'; id: string; point: SurveyPoint }
   | { type: 'remove-point'; id: string }
   | { type: 'set-model'; model: SurveyDataModel }
-  | { type: 'set-metadata'; metadata: Partial<SurveyDataModel['metadata']> }
+  /**
+   * A key set to `undefined` clears it. `Partial` alone cannot say that under
+   * `exactOptionalPropertyTypes`, and the difference matters: a site with no
+   * address and a site addressed "" are not the same thing to the title block.
+   */
+  | {
+      type: 'set-metadata';
+      metadata: {
+        [K in keyof SurveyDataModel['metadata']]?: SurveyDataModel['metadata'][K] | undefined;
+      };
+    }
   | { type: 'suggest'; suggestion: Suggestion }
   | { type: 'accept-suggestion'; id: string; at: string }
   | { type: 'dismiss-suggestion'; id: string }
@@ -244,11 +254,20 @@ export function reducer(state: ProjectState, action: Action): ProjectState {
     case 'set-model':
       return commit(state, action.model);
 
-    case 'set-metadata':
+    case 'set-metadata': {
+      const metadata: Record<string, unknown> = { ...state.model.metadata };
+      for (const [key, value] of Object.entries(action.metadata)) {
+        // `jurisdiction` is not optional — it selects the Plan Composer
+        // template, and a plan drawn to no template at all is not a state this
+        // reducer is allowed to produce.
+        if (value === undefined && key !== 'jurisdiction') delete metadata[key];
+        else if (value !== undefined) metadata[key] = value;
+      }
       return commit(state, {
         ...state.model,
-        metadata: { ...state.model.metadata, ...action.metadata },
+        metadata: metadata as unknown as SurveyDataModel['metadata'],
       });
+    }
 
     case 'suggest':
       return { ...state, suggestions: [...state.suggestions, action.suggestion] };

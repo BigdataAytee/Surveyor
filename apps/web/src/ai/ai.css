@@ -20,6 +20,10 @@
 .ai__message p {
   font-size: var(--text-body);
   line-height: var(--leading-normal);
+  /* The guides are numbered steps separated by newlines. Without this they
+     render as one run-on paragraph, which is exactly the wall of text a list
+     of steps exists to avoid. */
+  white-space: pre-wrap;
 }
 
 .ai__message--assistant {

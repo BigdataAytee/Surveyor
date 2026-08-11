@@ -12,6 +12,7 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import { contextFor, placeLabels, UNIT_ABBREVIATION } from '@surveyor/engine';
 
 import { DrawingCanvas, type CanvasTool } from '../canvas/DrawingCanvas.js';
+import { ProjectSheet } from '../panels/ProjectSheet.js';
 import { PropertiesSheet } from '../panels/PropertiesSheet.js';
 import { Segmented } from '../ui/primitives.js';
 import { AISheet } from '../ai/AISheet.js';
@@ -29,10 +30,10 @@ import {
   type StatusTone,
 } from '../ui/primitives.js';
 import { FadeIn } from '../ui/motion.js';
-import { EMPTY_MODEL, useProject } from '../state/store.js';
+import { useProject } from '../state/store.js';
 import './workspace.css';
 
-type Panel = 'ai' | 'data' | 'validation' | 'export' | 'layers' | 'properties' | null;
+type Panel = 'ai' | 'data' | 'validation' | 'export' | 'layers' | 'properties' | 'project' | null;
 
 /** Cap height the canvas stylesheet draws labels at, and its paper equivalent. */
 const CANVAS_TEXT_PX = 11;
@@ -79,8 +80,22 @@ export function Workspace() {
   }, [dispatch]);
 
   const status = pipeline.ok ? pipeline.validation.status : 'error';
-  const tone: StatusTone =
-    status === 'ready' ? 'ready' : status === 'needs-review' ? 'review' : 'error';
+
+  /**
+   * An empty project is not a broken one.
+   *
+   * The pipeline correctly declines to draw nothing, but rendering that as a
+   * red "Error" the moment someone starts a new project tells them they have
+   * done something wrong when they have done exactly the right thing.
+   */
+  const nothingYet = state.model.points.length === 0;
+  const tone: StatusTone = nothingYet
+    ? 'neutral'
+    : status === 'ready'
+      ? 'ready'
+      : status === 'needs-review'
+        ? 'review'
+        : 'error';
 
   const previews = useMemo(
     () => state.suggestions.flatMap((s) => (s.kind === 'feature' ? [s.feature] : [])),
@@ -142,15 +157,28 @@ export function Workspace() {
     <div className="workspace">
       <header className="topbar">
         <div className="topbar__left">
-          <h1 className="topbar__title">
-            {state.model.metadata.siteAddress ?? 'Untitled plan'}
-          </h1>
+          {/*
+            The site name is the thing on screen that names the project, so it
+            is the thing people reach for when they want to start another one.
+            Making it the way in is cheaper than a menu nobody finds.
+          */}
+          <button
+            type="button"
+            className="topbar__title"
+            aria-label="Project settings and new project"
+            onClick={() => openPanel('project')}
+          >
+            <span>{state.model.metadata.siteAddress ?? 'Untitled plan'}</span>
+            <span className="topbar__title-chevron" aria-hidden="true">
+              ⌄
+            </span>
+          </button>
           <ProgressStepper steps={workflowSteps} compact />
         </div>
 
         <div className="topbar__right">
           <StatusBadge tone={tone} onClick={() => openPanel('validation')}>
-            {STATUS_LABEL[status]}
+            {nothingYet ? 'Nothing yet' : STATUS_LABEL[status]}
           </StatusBadge>
           <Button
             variant="ghost"
@@ -229,7 +257,7 @@ export function Workspace() {
 
         {/* Above 1024px the assistant is always visible beside the drawing. */}
         <aside className="stage__rail">
-          <AISheet onOpenPanel={openPanel} />
+          <AISheet onOpenPanel={openPanel} onSelectTool={setTool} />
         </aside>
       </main>
 
@@ -274,7 +302,7 @@ export function Workspace() {
         subtitle="Grounded in your survey data"
         size="tall"
       >
-        <AISheet onOpenPanel={openPanel} />
+        <AISheet onOpenPanel={openPanel} onSelectTool={setTool} />
       </BottomSheet>
 
       <BottomSheet
@@ -322,19 +350,22 @@ export function Workspace() {
         <div className="layers">
           <Toggle label="Labels" checked={showLabels} onChange={setShowLabels} />
           <Toggle label="Grid" checked={showGrid} onChange={setShowGrid} />
-          <hr className="layers__rule" />
-          <Button
-            full
-            variant="danger"
-            onClick={() => {
-              dispatch({ type: 'set-model', model: EMPTY_MODEL });
-              setPanel(null);
-              setToast('Started a new, empty plan. Undo if that was a mistake.');
-            }}
-          >
-            Start a new plan
-          </Button>
         </div>
+      </BottomSheet>
+
+      <BottomSheet
+        open={panel === 'project'}
+        onClose={() => setPanel(null)}
+        title="Project"
+        subtitle="The site, the rules it is drawn under, and starting again"
+      >
+        <ProjectSheet
+          onClose={() => setPanel(null)}
+          onNewProject={() => {
+            setPanel(null);
+            setToast('Started a new, empty project. Undo if that was a mistake.');
+          }}
+        />
       </BottomSheet>
 
       {toast ? (
