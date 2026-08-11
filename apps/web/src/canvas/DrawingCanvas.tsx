@@ -105,6 +105,14 @@ export interface CanvasProps {
    * knows which points already exist there.
    */
   readonly onPlaceDimension?: (from: Coordinates, to: Coordinates) => void;
+  /**
+   * Right-click, or a long press on touch.
+   *
+   * Reports the object under the pointer along with where to put the menu, so
+   * the caller can offer actions for that object rather than a generic list.
+   * Page coordinates, because the menu is not drawn inside the SVG.
+   */
+  readonly onContextMenu?: (at: { readonly x: number; readonly y: number }, id: string | null) => void;
 }
 
 export type CanvasTool = 'select' | 'draw' | 'measure' | 'dimension';
@@ -122,6 +130,8 @@ const SNAP_LABEL: Readonly<Record<SnapResult['kind'], string>> = {
 
 const TAP_SLOP_PX = 8;
 const HIT_TOLERANCE_PX = 14;
+/** Long enough not to fire on a deliberate tap, short enough to feel intended. */
+const LONG_PRESS_MS = 500;
 
 export function DrawingCanvas({
   drawing,
@@ -143,6 +153,7 @@ export function DrawingCanvas({
   lockedLayers = [],
   onMoveBy,
   onPlaceDimension,
+  onContextMenu,
 }: CanvasProps) {
   // Measurement is ephemeral: it answers a question and is discarded, so it
   // never touches the Survey Data Model.
@@ -256,13 +267,16 @@ export function DrawingCanvas({
     banding: false,
   });
 
-  const localPoint = useCallback((event: React.PointerEvent): ScreenPoint => {
-    const rect = hostRef.current?.getBoundingClientRect();
-    return {
-      x: event.clientX - (rect?.left ?? 0),
-      y: event.clientY - (rect?.top ?? 0),
-    };
-  }, []);
+  const localPoint = useCallback(
+    (event: { readonly clientX: number; readonly clientY: number }): ScreenPoint => {
+      const rect = hostRef.current?.getBoundingClientRect();
+      return {
+        x: event.clientX - (rect?.left ?? 0),
+        y: event.clientY - (rect?.top ?? 0),
+      };
+    },
+    [],
+  );
 
   const targets = useMemo(() => snapTargetsFrom(visible), [visible]);
 
@@ -350,17 +364,52 @@ export function DrawingCanvas({
    */
   const dragAnchor = useRef<Coordinates | null>(null);
 
+  /**
+   * The menu, from a right-click or from holding a finger down.
+   *
+   * Long press is the touch equivalent and there is no other way to reach
+   * these actions on a phone, so it is not a nicety. It is cancelled by any
+   * movement past the tap slop, which is what stops a pan from turning into a
+   * menu halfway across the drawing.
+   */
+  const longPress = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  const raiseMenu = useCallback(
+    (client: { readonly x: number; readonly y: number }, point: ScreenPoint) => {
+      if (!onContextMenu || !viewport) return;
+      onContextMenu(client, hitTest(point, reachable, viewport, size));
+    },
+    [onContextMenu, reachable, size, viewport],
+  );
+
+  const cancelLongPress = useCallback(() => {
+    if (longPress.current === null) return;
+    clearTimeout(longPress.current);
+    longPress.current = null;
+  }, []);
+
   const onPointerDown = useCallback(
     (event: React.PointerEvent) => {
       const point = localPoint(event);
       pointers.current.set(event.pointerId, point);
       event.currentTarget.setPointerCapture(event.pointerId);
 
+      cancelLongPress();
       if (pointers.current.size === 1) {
         gesture.current.moved = false;
         gesture.current.start = point;
         dragAnchor.current = null;
         gesture.current.banding = false;
+
+        if (event.pointerType === 'touch' && onContextMenu) {
+          const client = { x: event.clientX, y: event.clientY };
+          longPress.current = setTimeout(() => {
+            longPress.current = null;
+            // Only if the finger has not travelled: a press that became a pan
+            // is a pan, and interrupting it with a menu would be maddening.
+            if (!gesture.current.moved) raiseMenu(client, point);
+          }, LONG_PRESS_MS);
+        }
 
         const hit =
           tool === 'select' && viewport ? hitTest(point, reachable, viewport, size) : null;
@@ -382,7 +431,19 @@ export function DrawingCanvas({
       }
       gesture.current.lastDistance = null;
     },
-    [localPoint, moving, onMoveBy, onSelectMany, reachable, size, tool, viewport],
+    [
+      cancelLongPress,
+      localPoint,
+      moving,
+      onContextMenu,
+      onMoveBy,
+      onSelectMany,
+      raiseMenu,
+      reachable,
+      size,
+      tool,
+      viewport,
+    ],
   );
 
   const onPointerMove = useCallback(
@@ -417,7 +478,10 @@ export function DrawingCanvas({
       const dragged =
         Math.hypot(point.x - gesture.current.start.x, point.y - gesture.current.start.y) >
         TAP_SLOP_PX;
-      if (dragged) gesture.current.moved = true;
+      if (dragged) {
+        gesture.current.moved = true;
+        cancelLongPress();
+      }
 
       // A drag that began on empty canvas in select mode is a selection box,
       // not a pan. Panning stays available from anywhere else, and from two
@@ -487,6 +551,7 @@ export function DrawingCanvas({
       const point = localPoint(event);
       pointers.current.delete(event.pointerId);
       gesture.current.lastDistance = null;
+      cancelLongPress();
 
       if (pointers.current.size > 0 || !viewport) return;
 
@@ -566,6 +631,7 @@ export function DrawingCanvas({
     },
     [
       band,
+      cancelLongPress,
       drag,
       localPoint,
       onDrawPoint,
@@ -673,6 +739,13 @@ export function DrawingCanvas({
           setCursor(null);
         }}
         onWheel={onWheel}
+        onContextMenu={(event) => {
+          if (!onContextMenu) return;
+          // The browser's own menu offers "Save image as…" over a drawing the
+          // user is editing, which is never what they wanted here.
+          event.preventDefault();
+          raiseMenu({ x: event.clientX, y: event.clientY }, localPoint(event));
+        }}
       >
         {grid ? (
           <g className="canvas__grid" aria-hidden="true">
@@ -1045,13 +1118,13 @@ function ZoomControls({
 }) {
   return (
     <div className="canvas__zoom">
-      <button type="button" onClick={onZoomIn} aria-label="Zoom in">
+      <button type="button" onClick={onZoomIn} aria-label="Zoom in" title="Zoom in">
         +
       </button>
-      <button type="button" onClick={onZoomOut} aria-label="Zoom out">
+      <button type="button" onClick={onZoomOut} aria-label="Zoom out" title="Zoom out">
         −
       </button>
-      <button type="button" onClick={onFit} aria-label="Fit plan to screen">
+      <button type="button" onClick={onFit} aria-label="Fit plan to screen" title="Fit the whole plan on screen">
         ⤢
       </button>
     </div>

@@ -79,6 +79,10 @@ export function Workspace() {
   const { state, dispatch, pipeline, canUndo, canRedo } = useProject();
   const [panel, setPanel] = useState<Panel>(null);
   const [toast, setToast] = useState<string | null>(null);
+  /** Where the context menu is and what it was opened on. */
+  const [menu, setMenu] = useState<
+    { readonly x: number; readonly y: number; readonly id: string | null } | null
+  >(null);
   const [showLabels, setShowLabels] = useState(true);
   const [showGrid, setShowGrid] = useState(true);
   const [theme, setTheme] = useState<'light' | 'dark'>('light');
@@ -128,6 +132,7 @@ export function Workspace() {
       // press over a drawing should never change the survey.
       switch (event.key) {
         case 'Escape':
+          setMenu(null);
           setPanel(null);
           setTool('select');
           dispatch({ type: 'select', id: null });
@@ -255,6 +260,7 @@ export function Workspace() {
             type="button"
             className="topbar__title"
             aria-label="Project settings and new project"
+            title="Project settings, revisions and new project"
             onClick={() => openPanel('project')}
           >
             <span>{state.model.metadata.siteAddress ?? 'Untitled plan'}</span>
@@ -273,6 +279,7 @@ export function Workspace() {
             variant="ghost"
             size="sm"
             aria-label="Undo"
+            title="Undo (Ctrl+Z)"
             disabled={!canUndo}
             onClick={() => dispatch({ type: 'undo' })}
           >
@@ -282,6 +289,7 @@ export function Workspace() {
             variant="ghost"
             size="sm"
             aria-label="Redo"
+            title="Redo (Ctrl+Shift+Z)"
             disabled={!canRedo}
             onClick={() => dispatch({ type: 'redo' })}
           >
@@ -291,6 +299,7 @@ export function Workspace() {
             variant="ghost"
             size="sm"
             aria-label="Toggle dark mode"
+            title="Switch between light and dark"
             onClick={() => setTheme((t) => (t === 'light' ? 'dark' : 'light'))}
           >
             {theme === 'light' ? '☾' : '☀'}
@@ -343,6 +352,15 @@ export function Workspace() {
               lockedLayers={LAYER_NAMES.filter((l) => layers[l.id].locked).map((l) => l.id)}
               onMoveBy={(by) => dispatch({ type: 'transform', transform: { kind: 'move', by } })}
               onPlaceDimension={(from, to) => dispatch({ type: 'add-dimension', from, to })}
+              onContextMenu={(at, id) => {
+                // Right-clicking an unselected object selects it first, which
+                // is what every drawing program does and what makes the menu's
+                // actions mean something.
+                if (id !== null && !state.selectedIds.includes(id)) {
+                  dispatch({ type: 'select', id });
+                }
+                setMenu({ ...at, id });
+              }}
             />
           )}
 
@@ -541,6 +559,51 @@ export function Workspace() {
         />
       </BottomSheet>
 
+      {menu ? (
+        <ContextMenu
+          at={menu}
+          onClose={() => setMenu(null)}
+          items={
+            state.selectedIds.length > 0
+              ? [
+                  { label: 'Edit…', hint: 'E', run: () => setPanel('tools') },
+                  ...(state.selectedId
+                    ? [{ label: 'Properties', run: () => setPanel('properties') }]
+                    : []),
+                  {
+                    label: 'Duplicate',
+                    // A copy on top of the original cannot be seen or grabbed,
+                    // so it lands a couple of metres away where it can be.
+                    run: () =>
+                      dispatch({ type: 'duplicate-selection', by: { de: 2, dn: -2 } }),
+                  },
+                  {
+                    label: 'Delete',
+                    hint: '⌫',
+                    danger: true,
+                    run: () => dispatch({ type: 'delete-selection' }),
+                  },
+                  {
+                    label: 'Clear selection',
+                    hint: 'Esc',
+                    run: () => dispatch({ type: 'select', id: null }),
+                  },
+                ]
+              : [
+                  { label: 'Add to the drawing…', hint: 'A', run: () => setPanel('add') },
+                  { label: 'Place a dimension', hint: 'I', run: () => setTool('dimension') },
+                  { label: 'Measure', hint: 'M', run: () => setTool('measure') },
+                  {
+                    label: snapping ? 'Turn snapping off' : 'Turn snapping on',
+                    hint: 'F',
+                    run: () => setSnapping((on) => !on),
+                  },
+                  { label: 'Survey data…', run: () => setPanel('data') },
+                ]
+          }
+        />
+      ) : null}
+
       {toast ? (
         <div className="workspace__toasts">
           <Toast
@@ -665,7 +728,7 @@ function ContextualToolbar({
               Delete
             </Button>
           ) : null}
-          <Button size="sm" variant="ghost" onClick={onClear} aria-label="Clear selection">
+          <Button size="sm" variant="ghost" onClick={onClear} aria-label="Clear selection" title="Clear selection (Esc)">
             ✕
           </Button>
         </div>
@@ -681,6 +744,67 @@ function selectedElement(
   return (pipeline.drawing?.layers ?? [])
     .flatMap((layer) => layer.elements)
     .find((element) => element.id === id);
+}
+
+interface MenuItem {
+  readonly label: string;
+  /** The keyboard shortcut that does the same thing, if there is one. */
+  readonly hint?: string;
+  readonly danger?: boolean;
+  readonly run: () => void;
+}
+
+/**
+ * The context menu.
+ *
+ * Reachable by right-click on a desktop and by holding a finger down on a
+ * phone, which is the part that matters — on touch there is no other way to
+ * get at these actions without hunting through panels.
+ *
+ * It shows the shortcut beside each item, so using it is also how you learn
+ * not to need it.
+ */
+function ContextMenu({
+  at,
+  items,
+  onClose,
+}: {
+  readonly at: { readonly x: number; readonly y: number };
+  readonly items: readonly MenuItem[];
+  readonly onClose: () => void;
+}) {
+  // Kept clear of the right and bottom edges, so a click near either does not
+  // open a menu half off the screen.
+  const left = Math.min(at.x, window.innerWidth - 220);
+  const top = Math.min(at.y, window.innerHeight - (items.length * 40 + 24));
+
+  return (
+    <>
+      {/*
+        A full-screen catcher rather than a document listener: it closes the
+        menu on the first click anywhere, and that click does not also fall
+        through and do something on the drawing underneath.
+      */}
+      <div className="menu__scrim" onPointerDown={onClose} onContextMenu={(e) => e.preventDefault()} />
+      <div className="menu" role="menu" style={{ left, top }}>
+        {items.map((item) => (
+          <button
+            key={item.label}
+            type="button"
+            role="menuitem"
+            className={`menu__item${item.danger ? ' menu__item--danger' : ''}`}
+            onClick={() => {
+              item.run();
+              onClose();
+            }}
+          >
+            <span>{item.label}</span>
+            {item.hint ? <span className="menu__hint numeric">{item.hint}</span> : null}
+          </button>
+        ))}
+      </div>
+    </>
+  );
 }
 
 /**

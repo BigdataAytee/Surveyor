@@ -66,10 +66,11 @@ reports real progress rather than animating a timer.
 - **The site name in the title bar** opens Project: what the site is called,
   which jurisdiction's rules it is drawn under, and starting a new one. Starting
   over asks twice, and Undo still reaches back past it.
-- **Select / Draw / Measure** (B.3). Draw places boundary corners by tapping;
-  a new corner is inserted into the edge it sits nearest, so the shape does not
-  fold over itself. Measure reports bearing and distance between two taps,
-  through the same COGO call the plan's dimensions use.
+- **Select / Draw / Measure / Dimension** (B.3). Draw places boundary corners by
+  tapping; a new corner is inserted into the edge it sits nearest, so the shape
+  does not fold over itself. Measure reports bearing and distance between two
+  taps, through the same COGO call the plan's dimensions use. Dimension does
+  the same two taps but leaves the result on the plan.
 - **Object snapping** latches a click onto a corner, a midpoint, a crossing, a
   perpendicular or the grid, and shows which. A snapped corner shares the other
   object's coordinate exactly — not to within a pixel — which is the difference
@@ -79,15 +80,38 @@ reports real progress rather than animating a timer.
   a surveyor moving a building 3 m north means 3.000 m and no pointer can say
   that. An offset produces a real setback line — mitred corners, exactly the
   distance from the boundary anywhere you measure.
+- **Dragging** covers the other half: when you want the fence *over there*,
+  against that corner, you pick it up. Only something already selected can be
+  dragged, so a stray gesture cannot move what you did not choose. The drag
+  snaps, and commits once on release — one undo step for one gesture, not a
+  hundred. A live readout shows the ground position under the cursor and how
+  far the drag has gone.
+- **Placed dimensions** (`I`) cover what no rule can infer: the setback from
+  the house to the boundary, the width of a drive, the distance from a tree to
+  a wall. A dimension stores which two points it measures between and nothing
+  about the answer — the number comes from the COGO engine at draw time, so it
+  cannot drift from the geometry it describes. Each end becomes a survey point
+  if there is not one there already, for the same reason.
+- **Layers** can be hidden or locked, which are two different things. Hiding
+  takes a layer out of the way. Locking leaves it in view to work against — a
+  boundary you are fitting a building to — while making it impossible to nudge.
+- **Right-click, or hold a finger down**, for the actions that apply to what is
+  under the pointer. Each one shows its keyboard shortcut, so using the menu is
+  also how you stop needing it.
 - **Add** (`A`) puts the rest of a site plan on the drawing: buildings and
   driveways, fences, walls and service runs, gates, trees drawn at their real
   canopy spread, spot heights, benchmarks and notes. Each is marked existing or
   proposed, and a level is printed from its elevation rather than typed as a
   label — so correcting the figure corrects the plan.
-- **Keyboard**: `V`/`D`/`M` pick a tool, `A` adds, `E` opens Edit, `F` toggles snapping,
+- **Keyboard**: `V`/`D`/`M`/`I` pick a tool, `A` adds, `E` opens Edit, `F` toggles snapping,
   `Delete` removes the selection, `Escape` clears it, `Ctrl+Z` / `Ctrl+Shift+Z`
   undo and redo.
-- **Import** accepts a pasted table or an uploaded `.csv`/`.txt`. The extractor
+- **Import** accepts a pasted table, an uploaded `.csv`/`.txt`, or a DXF
+  drawing — pasted or uploaded, recognised by its own shape rather than by its
+  file extension. A DXF put through the table extractor does not fail, it
+  succeeds on group codes and hands back a survey of nonsense, so the two are
+  told apart before either is read. The largest closed polyline is offered as
+  the boundary and confirmed rather than applied. The table extractor
   finds the table inside whatever else came with it — a site name, a date, a
   rule under the headings, a total at the foot — works out the delimiter, the
   header and the column roles, and scores itself. Where it genuinely cannot
@@ -108,6 +132,12 @@ reports real progress rather than animating a timer.
   surveyor runs by hand. They are computed from the same corners the area and
   the dimensions come from, so a plan checked against a deed shows the deed's
   figures rather than ones measured off the drawing.
+- **Renumber** renames every point in boundary order, rebuilding the ring
+  references as it goes — a plan whose corners read PT4, PT1, PT7, PT2 round
+  the boundary is one a reviewer has to work at.
+- **Revisions** are entered in Project and print in the corner of the sheet,
+  newest first, so a reviewer comparing two prints can see which is later and
+  what changed.
 - **Projects** keeps every survey you have saved, with a thumbnail drawn from
   the stored geometry, when it was last edited, how big it is, and a version
   history. Open, rename, duplicate, delete, or restore an earlier version —
