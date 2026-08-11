@@ -32,6 +32,7 @@ import {
   type Step,
   type StatusTone,
 } from '../ui/primitives.js';
+import { Sidebar } from '../ui/Sidebar.js';
 import { FadeIn } from '../ui/motion.js';
 import { useProject } from '../state/store.js';
 import './workspace.css';
@@ -83,6 +84,7 @@ export function Workspace() {
   const [menu, setMenu] = useState<
     { readonly x: number; readonly y: number; readonly id: string | null } | null
   >(null);
+  const [menuOpen, setMenuOpen] = useState(false);
   const [showLabels, setShowLabels] = useState(true);
   const [showGrid, setShowGrid] = useState(true);
   const [theme, setTheme] = useState<'light' | 'dark'>('light');
@@ -126,6 +128,11 @@ export function Workspace() {
         }
         return;
       }
+
+      // The drawer closes itself on Escape. Letting this handler run as well
+      // would also drop the selection and reset the tool, which is a lot to
+      // happen behind a menu the user was only dismissing.
+      if (event.key === 'Escape' && menuOpen) return;
 
       // The single-key shortcuts a drafter's left hand expects. Deliberately
       // few: every one of them has to be unambiguous, because a stray key
@@ -171,7 +178,7 @@ export function Workspace() {
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, [dispatch, state.selectedIds.length]);
+  }, [dispatch, menuOpen, state.selectedIds.length]);
 
   const status = pipeline.ok ? pipeline.validation.status : 'error';
 
@@ -250,6 +257,22 @@ export function Workspace() {
   return (
     <div className="workspace">
       <header className="topbar">
+        {/*
+          The menu button. First in the header and first in the tab order,
+          which is where a hand and a screen reader both look for it.
+        */}
+        <button
+          type="button"
+          className="topbar__menu"
+          aria-label="Open menu"
+          aria-expanded={menuOpen}
+          aria-haspopup="dialog"
+          title="Menu"
+          onClick={() => setMenuOpen(true)}
+        >
+          ☰
+        </button>
+
         <div className="topbar__left">
           {/*
             The site name is the thing on screen that names the project, so it
@@ -595,6 +618,25 @@ export function Workspace() {
         />
       </BottomSheet>
 
+      {/*
+        The navigation drawer. It reaches the panels the app already has by the
+        same route everything else does — a panel name — rather than bringing
+        a second navigation model with it.
+      */}
+      <Sidebar
+        open={menuOpen}
+        onClose={() => setMenuOpen(false)}
+        activeId={activeSection(panel)}
+        subtitle={state.model.metadata.siteAddress ?? 'Untitled plan'}
+        onNavigate={(item) => {
+          setMenuOpen(false);
+          if (item.target.kind === 'panel') setPanel(item.target.panel);
+          // The drawing is what the sheets sit on top of, so getting back to
+          // it means dismissing them.
+          else if (item.target.kind === 'canvas') setPanel(null);
+        }}
+      />
+
       {menu ? (
         <ContextMenu
           at={menu}
@@ -896,6 +938,31 @@ function Toggle({
       </span>
     </label>
   );
+}
+
+/**
+ * Which sidebar section the app is currently showing.
+ *
+ * Derived from the open panel rather than stored, so the highlight cannot fall
+ * out of step with what is on screen. No panel means the drawing itself, which
+ * is a section in its own right here.
+ */
+function activeSection(panel: Panel): string | null {
+  switch (panel) {
+    case null:
+      return 'drawings';
+    case 'ai':
+      return 'ai';
+    case 'projects':
+      return 'projects';
+    case 'tools':
+      return 'tools';
+    default:
+      // A panel with no sidebar entry — Data, Layers, Export and the rest are
+      // reached from the tab bar, and marking a section they do not belong to
+      // would point at the wrong thing.
+      return null;
+  }
 }
 
 function buildWorkflow(

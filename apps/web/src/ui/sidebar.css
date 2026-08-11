@@ -1,0 +1,260 @@
+/*
+ * The navigation drawer.
+ *
+ * Every value here is a token the rest of the app already uses. The scrim, the
+ * easing and the durations are the bottom sheet's, so the drawer arrives like
+ * the other overlays rather than like something bolted on.
+ */
+
+.drawer {
+  position: fixed;
+  inset: 0;
+  /* Above the sheets, because the drawer is what opens them. */
+  z-index: 50;
+}
+
+.drawer__scrim {
+  position: absolute;
+  inset: 0;
+  background: rgb(8 11 18 / 0.45);
+  backdrop-filter: blur(2px);
+  opacity: 0;
+  transition: opacity var(--duration-normal) var(--ease-standard);
+}
+
+.drawer--entering .drawer__scrim,
+.drawer--open .drawer__scrim {
+  opacity: 1;
+}
+
+.drawer__panel {
+  position: absolute;
+  top: 0;
+  left: 0;
+  bottom: 0;
+  display: flex;
+  flex-direction: column;
+  /* Mobile-first: most of the screen, but never the whole of it — a sliver of
+     the drawing stays visible so it is obvious what is underneath. */
+  width: min(84vw, 320px);
+  background: var(--surface-raised);
+  border-right: 1px solid var(--border);
+  box-shadow: var(--shadow-lg);
+
+  /* Notches and rounded corners: the drawer runs to every edge it touches. */
+  padding-top: env(safe-area-inset-top);
+  padding-bottom: env(safe-area-inset-bottom);
+  padding-left: env(safe-area-inset-left);
+
+  transform: translateX(-100%);
+  transition: transform var(--duration-large) var(--ease-decelerate);
+}
+
+.drawer--entering .drawer__panel,
+.drawer--open .drawer__panel {
+  transform: none;
+}
+
+.drawer__panel:focus {
+  outline: none;
+}
+
+/* A wider drawer where there is room, but still a drawer: the app's layout is
+   unchanged behind it, and it is not a permanent rail. */
+@media (min-width: 768px) {
+  .drawer__panel {
+    width: 340px;
+  }
+}
+
+/* --- Header -------------------------------------------------------------- */
+
+.drawer__header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: var(--space-3);
+  padding: var(--space-4) var(--space-3) var(--space-3) var(--space-4);
+  border-bottom: 1px solid var(--border);
+}
+
+.drawer__identity {
+  min-width: 0;
+}
+
+.drawer__title {
+  font-size: var(--text-subheading);
+  font-weight: var(--weight-semibold);
+  line-height: var(--leading-tight);
+}
+
+.drawer__subtitle {
+  margin-top: 2px;
+  font-size: var(--text-caption);
+  color: var(--ink-secondary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.drawer__close {
+  display: grid;
+  place-items: center;
+  flex: none;
+  width: var(--touch-min);
+  height: var(--touch-min);
+  border: none;
+  border-radius: var(--radius-md);
+  background: none;
+  color: var(--ink-secondary);
+  font-size: var(--text-body);
+  cursor: pointer;
+  transition: background-color var(--duration-micro) var(--ease-standard);
+}
+
+.drawer__close:hover {
+  background: var(--surface-hover);
+  color: var(--ink);
+}
+
+/* --- Items --------------------------------------------------------------- */
+
+.drawer__scroll {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  padding: var(--space-2) var(--space-2) var(--space-4);
+  /* The drawer scrolls; the page behind it does not follow. */
+  overscroll-behavior: contain;
+  -webkit-overflow-scrolling: touch;
+}
+
+.drawer__list {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  list-style: none;
+  padding: 0;
+}
+
+.drawer__group {
+  margin: var(--space-4) var(--space-3) var(--space-2);
+  padding-top: var(--space-3);
+  border-top: 1px solid var(--border);
+  font-size: var(--text-micro);
+  font-weight: var(--weight-semibold);
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--ink-tertiary);
+}
+
+.drawer__item {
+  display: grid;
+  grid-template-columns: 24px 1fr auto;
+  align-items: center;
+  gap: var(--space-3);
+  width: 100%;
+  min-height: var(--touch-min);
+  padding: var(--space-2) var(--space-3);
+  border: none;
+  border-radius: var(--radius-md);
+  background: none;
+  font: inherit;
+  font-size: var(--text-body);
+  color: var(--ink);
+  text-align: left;
+  cursor: pointer;
+  transition: background-color var(--duration-micro) var(--ease-standard);
+}
+
+.drawer__item:hover {
+  background: var(--surface-hover);
+}
+
+.drawer__item:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
+}
+
+/* The section you are looking at. Tinted and weighted rather than only
+   coloured, so it survives being read on a bright screen outdoors. */
+.drawer__item.is-active {
+  background: var(--accent-soft);
+  color: var(--accent-ink);
+  font-weight: var(--weight-semibold);
+}
+
+.drawer__item.is-unavailable {
+  color: var(--ink-tertiary);
+  cursor: default;
+}
+
+.drawer__item.is-unavailable:hover {
+  background: none;
+}
+
+.drawer__glyph {
+  display: grid;
+  place-items: center;
+  font-size: 1rem;
+  line-height: 1;
+  color: var(--ink-secondary);
+}
+
+.drawer__item.is-active .drawer__glyph {
+  color: var(--accent);
+}
+
+.drawer__item.is-unavailable .drawer__glyph {
+  color: var(--ink-tertiary);
+}
+
+.drawer__label {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.drawer__note {
+  flex: none;
+  font-size: var(--text-micro);
+  color: var(--ink-tertiary);
+}
+
+/* --- The trigger --------------------------------------------------------- */
+
+.topbar__menu {
+  display: grid;
+  place-items: center;
+  flex: none;
+  width: var(--touch-min);
+  height: var(--touch-min);
+  margin-left: calc(var(--space-2) * -1);
+  border: none;
+  border-radius: var(--radius-md);
+  background: none;
+  color: var(--ink);
+  font-size: 1.1rem;
+  line-height: 1;
+  cursor: pointer;
+  transition: background-color var(--duration-micro) var(--ease-standard);
+}
+
+.topbar__menu:hover {
+  background: var(--surface-hover);
+}
+
+.topbar__menu:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+/* Someone who has asked for less movement gets the drawer without the slide,
+   which is the one part of this that is motion for its own sake. */
+@media (prefers-reduced-motion: reduce) {
+  .drawer__panel,
+  .drawer__scrim {
+    transition: none;
+  }
+}
