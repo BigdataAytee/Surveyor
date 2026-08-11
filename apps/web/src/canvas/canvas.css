@@ -16,11 +16,8 @@
   touch-action: none;
   user-select: none;
   -webkit-user-select: none;
-  cursor: grab;
-}
-
-.canvas:active {
-  cursor: grabbing;
+  /* The cursor itself is defined with the other drawing cursors, at the foot
+     of this file, so there is one place that decides what it looks like. */
 }
 
 .canvas__svg {
@@ -278,14 +275,6 @@
 
 /* --- Tools -------------------------------------------------------------- */
 
-/*
- * Draw and measure need precise taps, so the cursor stops pretending the
- * surface is draggable while they are active.
- */
-.canvas:has(.canvas__hint) {
-  cursor: crosshair;
-}
-
 .canvas__hint {
   position: absolute;
   top: var(--space-3);
@@ -393,4 +382,48 @@
   stroke: var(--draw-point);
   stroke-width: 1.5;
   vector-effect: non-scaling-stroke;
+}
+
+/*
+ * Cursors on the drawing surface, drawn rather than borrowed.
+ *
+ * A native cursor keyword takes its colour from the operating system, so
+ * "crosshair" is a thin black cross on one machine and a white or inverted one
+ * on another — and there is no CSS that can colour it. These are drawn here
+ * instead, in black, so the cursor over a plan is the same everywhere.
+ *
+ * Black is safe on this surface specifically: the drawing stays light paper in
+ * both themes (see the note beside the --paper tokens), so a black cursor can
+ * never be a black cursor on a black background. That is not true of the rest
+ * of the UI, which is why these rules stop at the canvas.
+ *
+ * The keyword after each URL is the fallback. If a browser refuses the image
+ * it lands back on the cursor this app used before rather than on an arrow.
+ */
+
+.canvas {
+  /* Hotspot at the centre of the palm. */
+  cursor: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='24' height='24'%3E%3Cpath d='M8.5 11V4.2a1.35 1.35 0 0 1 2.7 0V10M11.2 10V3a1.35 1.35 0 0 1 2.7 0v7M13.9 10V4.4a1.35 1.35 0 0 1 2.7 0V12M16.6 12V7.5a1.35 1.35 0 0 1 2.7 0V15c0 4-2.7 7-6.4 7-2.8 0-4.4-1-6-3.2l-3-4.2a1.35 1.35 0 0 1 2.1-1.7l2.6 2.7' fill='%23fff' stroke='%23000' stroke-width='1.5' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E") 12 12, grab;
+}
+
+.canvas:active {
+  cursor: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='24' height='24'%3E%3Cpath d='M6 13.5v-3a1.35 1.35 0 0 1 2.7 0v1.2M8.7 11.7V9.5a1.35 1.35 0 0 1 2.7 0v2.2M11.4 11.7V9.8a1.35 1.35 0 0 1 2.7 0v1.9M14.1 11.9v-1.4a1.35 1.35 0 0 1 2.7 0V15c0 4-2.7 7-6.4 7-2.8 0-4.4-1-6-3.2l-2.6-3.6a1.35 1.35 0 0 1 2.1-1.7l1.4 1.6' fill='%23fff' stroke='%23000' stroke-width='1.5' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E") 12 12, grabbing;
+}
+
+/*
+ * Draw, measure and dimension place a point exactly where the cursor is, so
+ * the hotspot is the centre of the cross and the artwork carries a dot there —
+ * a cross alone leaves the precise pixel covered by its own ink.
+ */
+.canvas:has(.canvas__hint) {
+  cursor: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='24' height='24' shape-rendering='crispEdges' fill='%23000'%3E%3Crect x='11' y='0' width='2' height='9'/%3E%3Crect x='11' y='15' width='2' height='9'/%3E%3Crect x='0' y='11' width='9' height='2'/%3E%3Crect x='15' y='11' width='9' height='2'/%3E%3Crect x='11' y='11' width='2' height='2'/%3E%3C/svg%3E") 12 12, crosshair;
+}
+
+/*
+ * The overlays are controls, not drawing surface. They sit inside .canvas and
+ * so were inheriting the grab hand, which told the user they could drag the
+ * plan by its zoom buttons.
+ */
+.canvas__zoom button {
+  cursor: pointer;
 }
