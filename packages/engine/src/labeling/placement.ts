@@ -217,6 +217,136 @@ function project(
   return { min, max };
 }
 
+// ---------------------------------------------------------------------------
+// Finding what is nearby
+// ---------------------------------------------------------------------------
+
+/**
+ * A uniform grid over the plan, so a label is tested against what is near it
+ * rather than against everything.
+ *
+ * Placement is a collision search, and the obvious way to write it — for each
+ * candidate position, check every obstacle — is quadratic in the size of the
+ * drawing. On a garden that is invisible. On an estate of six hundred
+ * buildings it was over eight million segment-against-rectangle tests, about a
+ * second and a half of unresponsive tab before the plan appeared, and it grew
+ * faster than the drawing did.
+ *
+ * A grid does not change a single placement decision: it only narrows what
+ * gets tested to what could possibly overlap, and everything that survives the
+ * narrowing goes through the same exact geometry as before.
+ */
+class Nearby<T> {
+  private readonly cells = new Map<string, T[]>();
+  /**
+   * Items too large to bucket sensibly.
+   *
+   * A boundary running the length of the site would land in every cell, which
+   * costs more to index than it saves. Those are held aside and tested every
+   * time — always correct, and there are never many of them.
+   */
+  private readonly everywhere: T[] = [];
+
+  constructor(private readonly cellSize: number) {}
+
+  insert(box: BoundingBox, item: T): void {
+    const minX = Math.floor(box.min.x / this.cellSize);
+    const maxX = Math.floor(box.max.x / this.cellSize);
+    const minY = Math.floor(box.min.y / this.cellSize);
+    const maxY = Math.floor(box.max.y / this.cellSize);
+
+    if ((maxX - minX + 1) * (maxY - minY + 1) > SPREAD_LIMIT) {
+      this.everywhere.push(item);
+      return;
+    }
+
+    for (let x = minX; x <= maxX; x += 1) {
+      for (let y = minY; y <= maxY; y += 1) {
+        const key = `${x},${y}`;
+        const cell = this.cells.get(key);
+        if (cell) cell.push(item);
+        else this.cells.set(key, [item]);
+      }
+    }
+  }
+
+  /** Everything that might overlap this box. May include things that do not. */
+  near(box: BoundingBox): readonly T[] {
+    const minX = Math.floor(box.min.x / this.cellSize);
+    const maxX = Math.floor(box.max.x / this.cellSize);
+    const minY = Math.floor(box.min.y / this.cellSize);
+    const maxY = Math.floor(box.max.y / this.cellSize);
+
+    // One cell and nothing oversized is the common case by far, and returning
+    // the bucket directly avoids building a set for it.
+    if (minX === maxX && minY === maxY && this.everywhere.length === 0) {
+      return this.cells.get(`${minX},${minY}`) ?? EMPTY;
+    }
+
+    const found = new Set<T>(this.everywhere);
+    for (let x = minX; x <= maxX; x += 1) {
+      for (let y = minY; y <= maxY; y += 1) {
+        for (const item of this.cells.get(`${x},${y}`) ?? EMPTY) found.add(item);
+      }
+    }
+    return [...found];
+  }
+}
+
+const EMPTY: readonly never[] = [];
+
+/** How many cells one item may occupy before it is held aside instead. */
+const SPREAD_LIMIT = 24;
+
+/**
+ * A cell size for a set of boxes.
+ *
+ * Aimed at roughly one item per cell: too small and an item spans many cells,
+ * too large and each cell holds everything and the index does nothing. Falls
+ * back to the extent when the boxes have no size — a grid of degenerate points
+ * would otherwise divide by zero.
+ */
+function cellSizeFor(boxes: readonly BoundingBox[]): number {
+  if (boxes.length === 0) return 1;
+
+  let extentX = 0;
+  let extentY = 0;
+  let minX = Infinity;
+  let minY = Infinity;
+  let maxX = -Infinity;
+  let maxY = -Infinity;
+
+  for (const box of boxes) {
+    extentX += box.max.x - box.min.x;
+    extentY += box.max.y - box.min.y;
+    minX = Math.min(minX, box.min.x);
+    minY = Math.min(minY, box.min.y);
+    maxX = Math.max(maxX, box.max.x);
+    maxY = Math.max(maxY, box.max.y);
+  }
+
+  const average = Math.max(extentX, extentY) / boxes.length;
+  if (average > 0) return average * 2;
+
+  const span = Math.max(maxX - minX, maxY - minY);
+  return span > 0 ? span / Math.ceil(Math.sqrt(boxes.length)) : 1;
+}
+
+function boxOfCoordinates(points: readonly Coordinates[]): BoundingBox {
+  let minX = Infinity;
+  let minY = Infinity;
+  let maxX = -Infinity;
+  let maxY = -Infinity;
+  for (const point of points) {
+    const p = toPlanPoint(point);
+    minX = Math.min(minX, p.x);
+    minY = Math.min(minY, p.y);
+    maxX = Math.max(maxX, p.x);
+    maxY = Math.max(maxY, p.y);
+  }
+  return { min: { x: minX, y: minY }, max: { x: maxX, y: maxY } };
+}
+
 function boxContains(outer: BoundingBox, inner: BoundingBox): boolean {
   return (
     inner.min.x >= outer.min.x &&
@@ -595,7 +725,29 @@ export function placeLabels(input: PlacementInput): PlacementResult {
       a.id.localeCompare(b.id),
   );
 
-  const occupied: (readonly PlanPoint[])[] = [];
+  /*
+   * Indexed rather than scanned. The three collision sets — labels already
+   * placed, lines a label must not cross, and areas it must not sit inside —
+   * were each searched in full for every candidate position of every label,
+   * which is quadratic in the size of the drawing. The grid narrows each
+   * search to what is actually nearby; the exact tests that follow are
+   * unchanged, so no placement decision moves.
+   */
+  const obstacleBoxes = (options.obstacles ?? []).map(boxOfCoordinates);
+  const obstacleIndex = new Nearby<readonly Coordinates[]>(cellSizeFor(obstacleBoxes));
+  (options.obstacles ?? []).forEach((line, index) => {
+    obstacleIndex.insert(obstacleBoxes[index]!, line);
+  });
+
+  const areaBoxes = (options.avoidAreas ?? []).map((area) => boxOfCoordinates(area.vertices));
+  const areaIndex = new Nearby<AvoidArea>(cellSizeFor(areaBoxes));
+  (options.avoidAreas ?? []).forEach((area, index) => {
+    areaIndex.insert(areaBoxes[index]!, area);
+  });
+
+  // Labels are all about the same size, so a few line heights makes a cell
+  // that holds a handful of them.
+  const occupiedIndex = new Nearby<readonly PlanPoint[]>(Math.max(height * 6, 1));
   const placed: PlacedLabel[] = [];
   const unresolved: { labelId: string; message: string }[] = [];
   let sheetLine = 0;
@@ -625,7 +777,7 @@ export function placeLabels(input: PlacementInput): PlacementResult {
       const position = { x: anchor.x + width / 2, y: anchor.y - sheetLine * height * 1.8 };
       sheetLine += 1;
       const bounds = orientedBounds(position, width, height, 0);
-      occupied.push(orientedCorners(position, width, height, 0));
+      occupiedIndex.insert(bounds, orientedCorners(position, width, height, 0));
       placed.push({
         spec,
         text: rendered.text,
@@ -651,11 +803,13 @@ export function placeLabels(input: PlacementInput): PlacementResult {
       width,
       height,
       clearance,
-      occupied,
-      obstacles: options.obstacles ?? [],
-      avoidAreas: (options.avoidAreas ?? []).filter(
-        (area) => area.ownerId !== subjectOwnerId(spec.subject),
-      ),
+      occupied: occupiedIndex,
+      obstacles: obstacleIndex,
+      avoidAreas: areaIndex,
+      // A feature's own outline must not push its own label away, so the
+      // owner is excluded at query time rather than by rebuilding the index
+      // once per label.
+      ignoreAreaOwner: subjectOwnerId(spec.subject),
       sheetBox,
     });
 
@@ -675,7 +829,7 @@ export function placeLabels(input: PlacementInput): PlacementResult {
       continue;
     }
 
-    occupied.push(outcome.corners);
+    occupiedIndex.insert(outcome.bounds, outcome.corners);
     placed.push({
       spec,
       text: rendered.text,
@@ -708,9 +862,11 @@ interface ChooseInput {
   readonly width: number;
   readonly height: number;
   readonly clearance: number;
-  readonly occupied: readonly (readonly PlanPoint[])[];
-  readonly obstacles: readonly (readonly Coordinates[])[];
-  readonly avoidAreas: readonly AvoidArea[];
+  readonly occupied: Nearby<readonly PlanPoint[]>;
+  readonly obstacles: Nearby<readonly Coordinates[]>;
+  readonly avoidAreas: Nearby<AvoidArea>;
+  /** The feature whose own outline should not block its own label. */
+  readonly ignoreAreaOwner: string | null;
   readonly sheetBox: BoundingBox | undefined;
 }
 
@@ -741,15 +897,25 @@ function chooseCandidate(
     // exact ones only run on what survives.
     if (input.sheetBox && !boxContains(input.sheetBox, bounds)) continue;
     if (
-      input.occupied.some(
-        (other) =>
-          boxesOverlap(boundsOfCorners(other), bounds) && convexOverlap(other, corners),
+      input.occupied
+        .near(bounds)
+        .some(
+          (other) =>
+            boxesOverlap(boundsOfCorners(other), bounds) && convexOverlap(other, corners),
+        )
+    ) {
+      continue;
+    }
+    if (crossesObstacle(corners, input.obstacles.near(bounds))) continue;
+    if (
+      insideAvoidedArea(
+        candidate.position,
+        input.avoidAreas.near(bounds),
+        input.ignoreAreaOwner,
       )
     ) {
       continue;
     }
-    if (crossesObstacle(corners, input.obstacles)) continue;
-    if (insideAvoidedArea(candidate.position, input.avoidAreas)) continue;
 
     return { candidate, bounds, corners, index };
   }
@@ -787,8 +953,12 @@ function crossesObstacle(
 function insideAvoidedArea(
   position: PlanPoint,
   areas: readonly AvoidArea[],
+  ignoreOwner: string | null,
 ): boolean {
-  return areas.some((area) => pointInPolygon(toCoordinates(position), area.vertices));
+  return areas.some(
+    (area) =>
+      area.ownerId !== ignoreOwner && pointInPolygon(toCoordinates(position), area.vertices),
+  );
 }
 
 function fallbackPosition(geometry: SubjectGeometry): PlanPoint {

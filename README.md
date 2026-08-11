@@ -226,6 +226,33 @@ an argument naming a task or panel that does not exist, a `show` target that is
 not on the drawing, a reply claiming to be in scope while naming nothing that
 handles it. The schema is the seatbelt; the validator is the crumple zone.
 
+### On a big drawing
+
+Everything above was written for a single plot, so it was measured on
+something much larger: an estate of buildings on a grid, opened cold.
+
+| Features | Paint | Pan, fitted | Pan, zoomed in |
+| --- | --- | --- | --- |
+| 10 (the sample) | 109 ms | flat | flat |
+| 200 | 176 ms | flat | flat |
+| 600 | 315 ms | ~170 ms of render over 30 frames | flat |
+| 1500 | 682 ms | ~950 ms over 30 frames | flat |
+
+Two things make that possible, and both were added after measuring rather
+than before. Elements outside the view are skipped, tested by extent so a
+boundary running clear across the screen is kept even though both its ends
+are off it — which is why panning while zoomed in costs the same at 1500
+features as at 10. And label placement indexes its collision sets by
+position: it used to search every obstacle for every candidate position of
+every label, which at 600 features was over eight million segment tests and
+a second and a half of frozen tab. It is now roughly linear in the size of
+the drawing.
+
+The remaining honest limit is panning with a very large drawing entirely on
+screen — 1500 features fitted is about 30 ms a frame, because that many SVG
+elements genuinely have to be re-projected. Zooming in fixes it, and that is
+what anyone editing such a drawing does anyway.
+
 ## Testing
 
 ```bash

@@ -422,3 +422,91 @@ test('labels avoid crossing the lines they describe', () => {
     }
   }
 });
+
+test('the spatial index changes what is tested, not where labels land', () => {
+  // Placement indexes its collision sets by position so a label is tested
+  // against what is near it rather than against the whole drawing. That is a
+  // speed change and must be nothing else.
+  //
+  // The scale is fixed here, so the only variable is how many obstacles there
+  // are: adding a thousand of them a long way off must not move a single
+  // label. Through the whole pipeline this would be untestable, because more
+  // geometry legitimately changes the sheet scale and every label with it.
+  const specs = generateBaseLabels({ model: MODEL, rings: RINGS });
+
+  const bare = placeLabels({ specs, ctx: CTX, options: OPTIONS });
+
+  // A thousand small squares, far enough away to be irrelevant to every label
+  // above, and numerous enough that the index buckets rather than degenerating
+  // into a single cell.
+  const distant = Array.from({ length: 1000 }, (_, index) => {
+    const e = 900000 + (index % 40) * 30;
+    const n = 900000 + Math.floor(index / 40) * 30;
+    return [
+      { easting: e, northing: n },
+      { easting: e + 10, northing: n },
+      { easting: e + 10, northing: n + 10 },
+      { easting: e, northing: n },
+    ];
+  });
+
+  const crowded = placeLabels({
+    specs,
+    ctx: CTX,
+    options: {
+      ...OPTIONS,
+      obstacles: distant,
+      avoidAreas: distant.map((vertices, index) => ({ ownerId: `far_${index}`, vertices })),
+    },
+  });
+
+  assert.ok(bare.labels.length > 0, 'there should be labels to compare');
+  assert.equal(crowded.labels.length, bare.labels.length);
+
+  const where = (result: typeof bare) =>
+    new Map(
+      result.labels.map((placed) => [
+        placed.spec.id,
+        `${placed.outcome}@${placed.position.x.toFixed(6)},${placed.position.y.toFixed(6)}`,
+      ]),
+    );
+
+  const before = where(bare);
+  for (const [id, position] of where(crowded)) {
+    assert.equal(position, before.get(id), `label ${id} moved`);
+  }
+});
+
+test('an obstacle is found however the grid happens to bucket it', () => {
+  // The index holds oversized items aside and tests them every time. A line
+  // spanning the whole drawing is exactly that case, and it must still block a
+  // label that would cross it — otherwise the optimisation has quietly turned
+  // off a rule.
+  const specs = generateBaseLabels({ model: MODEL, rings: RINGS }).filter(
+    (spec) => spec.role === 'area',
+  );
+  assert.ok(specs.length > 0, 'the area label is the one being pushed about');
+
+  const across = placeLabels({
+    specs,
+    ctx: CTX,
+    options: {
+      ...OPTIONS,
+      // A dense hatch over the whole parcel: nowhere is clear, so the area
+      // label has to be dropped or led out rather than placed as if the lines
+      // were not there.
+      // The parcel is the 30 x 20 rectangle at the origin; the hatch spans it.
+      obstacles: Array.from({ length: 220 }, (_, index) => [
+        { easting: -5, northing: -1 + index * 0.1 },
+        { easting: 35, northing: -1 + index * 0.1 },
+      ]),
+    },
+  });
+
+  const label = across.labels[0]!;
+  assert.notEqual(
+    label.outcome,
+    'placed',
+    'a label over a hatched parcel should not report an unobstructed placement',
+  );
+});
