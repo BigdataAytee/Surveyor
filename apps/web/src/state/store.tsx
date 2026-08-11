@@ -45,6 +45,13 @@ import {
 } from '@surveyor/engine';
 
 import { loadModel, saveModel } from './persistence.js';
+import {
+  listProjects,
+  loadProject,
+  newProjectId,
+  recordArea,
+  saveProject,
+} from './library.js';
 import { SAMPLE_PROJECT } from './sample.js';
 
 // ---------------------------------------------------------------------------
@@ -76,6 +83,8 @@ export type Suggestion =
     };
 
 export interface ProjectState {
+  /** Which saved project this is. Every autosave writes to it. */
+  readonly projectId: string;
   readonly model: SurveyDataModel;
   readonly suggestions: readonly Suggestion[];
   /**
@@ -118,6 +127,14 @@ export type Action =
   | { type: 'update-point'; id: string; point: SurveyPoint }
   | { type: 'remove-point'; id: string }
   | { type: 'set-model'; model: SurveyDataModel }
+  /**
+   * Switch to another saved project, or start a fresh one.
+   *
+   * The history is dropped rather than carried across: undoing past the moment
+   * you opened a different survey and finding yourself in the previous one is
+   * not a behaviour anybody wants.
+   */
+  | { type: 'open-project'; id: string; model: SurveyDataModel }
   /**
    * A key set to `undefined` clears it. `Partial` alone cannot say that under
    * `exactOptionalPropertyTypes`, and the difference matters: a site with no
@@ -467,6 +484,19 @@ export function reducer(state: ProjectState, action: Action): ProjectState {
       );
     }
 
+    case 'open-project':
+      return {
+        ...state,
+        projectId: action.id,
+        model: action.model,
+        suggestions: [],
+        selectedIds: [],
+        selectedId: null,
+        highlightId: null,
+        past: [],
+        future: [],
+      };
+
     case 'highlight':
       return { ...state, highlightId: action.id };
 
@@ -652,12 +682,40 @@ export function reducer(state: ProjectState, action: Action): ProjectState {
 // ---------------------------------------------------------------------------
 
 /**
+ * What to open on a cold start.
+ *
+ * The most recently touched project, or the single-slot store this replaced,
+ * or the sample. Falling back through all three matters at exactly one moment:
+ * the first load after this feature shipped, when a user who had a project
+ * would otherwise be shown an empty library and conclude their work was gone.
+ */
+function restoreLastProject(): { readonly id: string; readonly model: SurveyDataModel } {
+  const [latest] = listProjects();
+  if (latest) {
+    const model = loadProject(latest.id);
+    if (model) return { id: latest.id, model };
+  }
+
+  const legacy = loadModel();
+  const id = newProjectId();
+  const model = legacy ?? SAMPLE_PROJECT;
+  saveProject(id, model);
+  return { id, model };
+}
+
+/**
  * Restored work wins over the sample project, which exists only so a first-time
  * visitor has something to judge the tool by.
  */
 export function initialState(): ProjectState {
+  // The library is the source of truth once there is one; the single-slot
+  // store it replaced is still read so an existing user's work survives the
+  // upgrade rather than appearing to have been deleted.
+  const restored = restoreLastProject();
+
   return {
-    model: loadModel() ?? SAMPLE_PROJECT,
+    projectId: restored.id,
+    model: restored.model,
     suggestions: [],
     selectedIds: [],
     selectedId: null,
@@ -698,7 +756,13 @@ export function ProjectProvider({ children }: { readonly children: ReactNode }) 
 
   useEffect(() => {
     saveModel(state.model);
-  }, [state.model]);
+    saveProject(state.projectId, state.model);
+  }, [state.model, state.projectId]);
+
+  // The area is what a project card shows, and only the pipeline knows it.
+  useEffect(() => {
+    recordArea(state.projectId, pipeline.ok ? (pipeline.rings[0]?.area ?? null) : null);
+  }, [pipeline, state.projectId]);
 
   const value = useMemo<Store>(
     () => ({

@@ -103,8 +103,17 @@ reports real progress rather than animating a timer.
   Closure is computed and shown while you type, because on a traverse — unlike a
   coordinate boundary, which closes by construction — that number decides
   whether the survey is usable.
-- **Work is saved** to local storage as it changes, debounced. Pending AI
-  suggestions deliberately do not survive a reload.
+- **Projects** keeps every survey you have saved, with a thumbnail drawn from
+  the stored geometry, when it was last edited, how big it is, and a version
+  history. Open, rename, duplicate, delete, or restore an earlier version —
+  restoring is itself undoable, because losing the present to recover the past
+  is not a recovery feature. Reached from the site name in the title bar.
+- **Work is saved** as it changes, debounced, into the open project. A version
+  is snapshotted at most once a minute: every keystroke in a coordinate field
+  is an edit, and two hundred near-identical versions is a list to scroll past
+  rather than a history. Pending AI suggestions deliberately do not survive a
+  reload. Storage is this browser only — no sync, and clearing site data clears
+  the library.
 
 ### What the AI layer does
 
@@ -190,7 +199,7 @@ npm run smoke --workspace @surveyor/web     # browser flows (needs a preview ser
 ```
 
 The smoke test drives the trust loop, the export gate, the drawing and measuring
-tools, CAD editing, drawing entities, import, a messy paste, pasting into the assistant, starting
+tools, CAD editing, drawing entities, the project library, import, a messy paste, pasting into the assistant, starting
 a new project, asking the assistant for help, traverse entry and persistence in
 a real browser, and fails on console errors, on-screen label collisions, or horizontal
 overflow at any breakpoint.

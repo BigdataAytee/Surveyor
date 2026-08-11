@@ -454,3 +454,92 @@
   font: inherit;
   color: var(--ink);
 }
+
+/* --- Project library ----------------------------------------------------- */
+
+.projects {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  list-style: none;
+  padding: 0;
+}
+
+.project {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+}
+
+.project__head {
+  display: flex;
+  gap: var(--space-3);
+  align-items: flex-start;
+}
+
+/* Drawn from the stored geometry each time, so it can never show a plan that
+   has since been corrected. */
+.project__thumb {
+  flex: none;
+  width: 48px;
+  height: 48px;
+  border-radius: var(--radius-sm);
+  background: var(--paper);
+  border: 1px solid var(--border);
+}
+
+.project__thumb-shape {
+  fill: var(--accent-soft);
+  stroke: var(--ink);
+  stroke-width: 1.5;
+  vector-effect: non-scaling-stroke;
+}
+
+.project__thumb-empty {
+  fill: none;
+  stroke: var(--border-strong);
+  stroke-width: 1;
+  stroke-dasharray: 3 3;
+}
+
+.project__facts {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  min-width: 0;
+  flex: 1;
+}
+
+.project__name {
+  font-weight: var(--weight-semibold);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.project__meta {
+  font-size: var(--text-caption);
+  color: var(--ink-secondary);
+}
+
+.project__actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+}
+
+.versions {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  list-style: none;
+  padding: var(--space-2) 0 0;
+  border-top: 1px solid var(--border);
+}
+
+.versions__item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+}

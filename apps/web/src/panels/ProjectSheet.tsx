@@ -16,14 +16,17 @@ import { JURISDICTIONS } from '@surveyor/engine';
 
 import { Button, Card, Field, TextInput } from '../ui/primitives.js';
 import { EMPTY_MODEL, useProject } from '../state/store.js';
+import { newProjectId } from '../state/library.js';
 import './panels.css';
 
 export function ProjectSheet({
   onClose,
   onNewProject,
+  onOpenLibrary,
 }: {
   readonly onClose: () => void;
   readonly onNewProject: () => void;
+  readonly onOpenLibrary: () => void;
 }) {
   const { state, dispatch } = useProject();
   const [confirming, setConfirming] = useState(false);
@@ -87,20 +90,24 @@ export function ProjectSheet({
 
       <div className="panel__footer panel__footer--stacked">
         {/*
-          Two taps, because it replaces everything. Undo still reaches back past
-          it — said here rather than left for the user to discover.
+          Two taps, because starting a new one leaves this one. It is not
+          destructive any more — the library keeps it — but a surveyor who
+          expects the old behaviour deserves to be told that before it happens.
         */}
         {confirming ? (
           <>
             <p className="panel__body">
-              This replaces the current plan. Undo brings it back if you change
-              your mind.
+              This starts a separate project. “{state.model.metadata.siteAddress ?? 'This plan'}”
+              stays saved and you can reopen it from Projects.
             </p>
             <Button
               full
               variant="danger"
               onClick={() => {
-                dispatch({ type: 'set-model', model: EMPTY_MODEL });
+                // A *new* project, not this one emptied. Overwriting the open
+                // one would destroy it, which is what the library exists to
+                // stop happening.
+                dispatch({ type: 'open-project', id: newProjectId(), model: EMPTY_MODEL });
                 setConfirming(false);
                 onNewProject();
               }}
@@ -115,6 +122,9 @@ export function ProjectSheet({
           <>
             <Button full variant="primary" onClick={onClose}>
               Done
+            </Button>
+            <Button full onClick={onOpenLibrary}>
+              All projects
             </Button>
             <Button full variant="danger" onClick={() => setConfirming(true)}>
               Start a new project

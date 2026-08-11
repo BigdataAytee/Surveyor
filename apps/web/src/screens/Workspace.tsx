@@ -13,6 +13,7 @@ import { contextFor, placeLabels, UNIT_ABBREVIATION } from '@surveyor/engine';
 
 import { DrawingCanvas, type CanvasTool } from '../canvas/DrawingCanvas.js';
 import { AddSheet } from '../panels/AddSheet.js';
+import { ProjectsSheet } from '../panels/ProjectsSheet.js';
 import { ProjectSheet } from '../panels/ProjectSheet.js';
 import { ToolsSheet } from '../panels/ToolsSheet.js';
 import { PropertiesSheet } from '../panels/PropertiesSheet.js';
@@ -45,6 +46,7 @@ type Panel =
   | 'project'
   | 'tools'
   | 'add'
+  | 'projects'
   | null;
 
 /** Cap height the canvas stylesheet draws labels at, and its paper equivalent. */
@@ -424,6 +426,16 @@ export function Workspace() {
       </BottomSheet>
 
       <BottomSheet
+        open={panel === 'projects'}
+        onClose={() => setPanel(null)}
+        title="Projects"
+        subtitle="Every survey you have saved, with its history"
+        size="full"
+      >
+        <ProjectsSheet onClose={() => setPanel(null)} />
+      </BottomSheet>
+
+      <BottomSheet
         open={panel === 'add'}
         onClose={() => setPanel(null)}
         title="Add to the drawing"
@@ -449,9 +461,10 @@ export function Workspace() {
       >
         <ProjectSheet
           onClose={() => setPanel(null)}
+          onOpenLibrary={() => setPanel('projects')}
           onNewProject={() => {
             setPanel(null);
-            setToast('Started a new, empty project. Undo if that was a mistake.');
+            setToast('Started a new project. The last one is saved in Projects.');
           }}
         />
       </BottomSheet>

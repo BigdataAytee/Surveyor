@@ -672,6 +672,55 @@ if (CLASSIFIER_ONLY) {
   await page.close();
 }
 
+// --- The project library ----------------------------------------------------
+
+{
+  // The bug this exists to fix: the app held one project, so starting a second
+  // destroyed the first. That is what the check is.
+  const page = await open('library', DESKTOP);
+
+  async function openProjectSheet() {
+    await page.getByRole('button', { name: 'Project settings and new project' }).click();
+    await page.waitForTimeout(400);
+  }
+
+  await openProjectSheet();
+  await page.getByLabel('Site name or address').fill('Alpha Farm');
+  await page.waitForTimeout(700);
+  await page.getByRole('button', { name: 'Done' }).click();
+  await page.waitForTimeout(500);
+
+  await openProjectSheet();
+  await page.getByRole('button', { name: 'Start a new project' }).click();
+  await page.waitForTimeout(300);
+  await page.getByRole('button', { name: 'Yes, start a new project' }).click();
+  await page.waitForTimeout(900);
+
+  await openProjectSheet();
+  await page.getByLabel('Site name or address').fill('Beta Field');
+  await page.waitForTimeout(700);
+  await page.getByRole('button', { name: 'All projects' }).click();
+  await page.waitForTimeout(700);
+
+  const library = (await page.locator('.projects').innerText()) ?? '';
+  expect(/Alpha Farm/.test(library), 'library: starting a project destroyed the previous one');
+  expect(/Beta Field/.test(library), 'library: the new project was not saved');
+  await shot(page, 'library');
+
+  // Reopening has to bring the survey back, not just the name.
+  await page.getByRole('button', { name: 'Open' }).first().click();
+  await page.waitForTimeout(900);
+  expect(
+    /Alpha Farm/.test((await page.locator('.topbar__title').innerText()) ?? ''),
+    'library: reopening did not switch project',
+  );
+  expect(
+    (await page.locator('.element--point').count()) >= 3,
+    'library: the reopened project came back without its survey',
+  );
+  await page.close();
+}
+
 // --- Traverse entry ---------------------------------------------------------
 
 {
