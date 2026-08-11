@@ -192,32 +192,94 @@ export function openingMessage(ctx: AssistantContext): AssistantMessage {
 // Free text
 // ---------------------------------------------------------------------------
 
+/**
+ * How big the parcel is, in every sense of the question.
+ *
+ * "How many metres is the size of this land" is one question with three
+ * reasonable answers — area, perimeter, and the length of each side — and the
+ * old reply gave only the first. Guessing which one was meant is a worse bet
+ * than giving all three, because the engine has already computed every one of
+ * them and none of them is long to say.
+ *
+ * Every number here comes off the pipeline. The assistant is reading them out,
+ * not working them out.
+ */
+function describeParcel(ctx: AssistantContext): AssistantMessage {
+  const ring = ctx.pipeline.ok ? ctx.pipeline.rings[0] : undefined;
+
+  if (!ring) {
+    return {
+      id: nextId('msg'),
+      role: 'assistant',
+      text:
+        ctx.model.points.length === 0
+          ? 'There is nothing on the drawing yet, so there is no size to report. Paste your points in and I’ll work it out.'
+          : 'I don’t have a closed boundary yet, so I can’t give you an area. Check the boundary order in Data.',
+      actions: [
+        { id: nextId('act'), label: 'Getting your points in', intent: { kind: 'guide', task: 'enter-data' }, tone: 'primary' },
+      ],
+    };
+  }
+
+  const sides = ring.segments.map((segment) => segment.distance);
+  const sideText =
+    sides.length > 0 && sides.length <= 8
+      ? ` Its ${sides.length} sides are ${listOf(sides.map((d) => d.toFixed(2)))} m.`
+      : '';
+
+  return {
+    id: nextId('msg'),
+    role: 'assistant',
+    text:
+      `The boundary encloses ${ring.area.toFixed(1)} m² — that is ` +
+      `${(ring.area / 10000).toFixed(4)} hectares, or about ` +
+      `${Math.round(Math.sqrt(ring.area))} m square if it helps to picture it. ` +
+      `The perimeter is ${ring.perimeter.toFixed(2)} m.${sideText} ` +
+      `Every one of those is calculated from your corners, not typed in.`,
+    actions: [
+      { id: nextId('act'), label: 'How is the area worked out?', intent: { kind: 'explain', topic: 'area' } },
+      { id: nextId('act'), label: 'Measure something myself', intent: { kind: 'tool', tool: 'measure' } },
+    ],
+    references: [ring.ringId],
+  };
+}
+
+function listOf(items: readonly string[]): string {
+  if (items.length <= 1) return items[0] ?? '';
+  return `${items.slice(0, -1).join(', ')} and ${items[items.length - 1]}`;
+}
+
 interface Rule {
   readonly test: RegExp;
-  readonly respond: (ctx: AssistantContext, match: RegExpExecArray) => AssistantMessage;
+  /**
+   * Words that point at this rule regardless of how the sentence is built.
+   *
+   * The regexes below are precise and fast, and they were also the whole
+   * problem: `size of (the )?(plot|site|parcel|land)` answers "size of the
+   * land" and misses "size of this land", which is the same question with one
+   * different word in the middle. Phrases people actually type do not hold
+   * still. These terms are scored instead of matched, so word order, filler
+   * and phrasing stop mattering — see `bestByKeyword`.
+   */
+  readonly terms: readonly string[];
+  readonly respond: (ctx: AssistantContext, match: RegExpExecArray | null) => AssistantMessage;
 }
 
 const RULES: readonly Rule[] = [
   {
-    test: /\b(area|how big|size of (the )?(plot|site|parcel|land))\b/i,
-    respond: (ctx) => {
-      const ring = ctx.pipeline.ok ? ctx.pipeline.rings[0] : undefined;
-      return {
-        id: nextId('msg'),
-        role: 'assistant',
-        text: ring
-          ? `The parcel encloses ${ring.area.toFixed(1)} m² (${(ring.area / 10000).toFixed(4)} ha). ` +
-            `That is calculated from your boundary corners, not typed in.`
-          : 'I don’t have a closed boundary yet, so there is no area to report.',
-        actions: [
-          { id: nextId('act'), label: 'How is this worked out?', intent: { kind: 'explain', topic: 'area' } },
-        ],
-        ...(ring ? { references: ['ring_1'] } : {}),
-      };
-    },
+    test: /\b(area|acreage|how big|how large|dimension|dimensions|size)\b/i,
+    terms: [
+      'area', 'acreage', 'hectare', 'hectares', 'acre', 'acres', 'size', 'big',
+      'large', 'dimension', 'dimensions', 'measurement', 'measurements',
+      'metres', 'meters', 'metre', 'meter', 'long', 'length', 'wide', 'width',
+      'perimeter', 'side', 'sides', 'land', 'plot', 'parcel', 'square',
+      'how big', 'how large', 'how long', 'how many metres', 'how many meters',
+    ],
+    respond: (ctx) => describeParcel(ctx),
   },
   {
     test: /\b(show|find|where|zoom).*\b(building|house|garage)\b/i,
+    terms: ['building', 'house', 'garage', 'shed', 'outbuilding', 'structure', 'dwelling'],
     respond: (ctx) => {
       const building = ctx.model.siteFeatures.find((f) => f.type === 'building');
       return building
@@ -244,6 +306,7 @@ const RULES: readonly Rule[] = [
   },
   {
     test: /\badd\b.*\b(garage|shed|outbuilding|extension|building)\b/i,
+    terms: ['add a building', 'add a garage', 'add a shed', 'new building', 'put a building'],
     respond: (_ctx, match) => ({
       id: nextId('msg'),
       role: 'assistant',
@@ -254,7 +317,9 @@ const RULES: readonly Rule[] = [
         {
           id: nextId('act'),
           label: 'Propose it',
-          intent: { kind: 'suggest-building', label: capitalise(match[1] ?? 'Building') },
+          // `match` is null when this rule was reached by keyword score rather
+          // than by its pattern, so there is no captured name to use.
+          intent: { kind: 'suggest-building', label: capitalise(match?.[1] ?? 'Building') },
           tone: 'primary',
         },
       ],
@@ -262,6 +327,7 @@ const RULES: readonly Rule[] = [
   },
   {
     test: /\b(closure|close|misclos)/i,
+    terms: ['closure', 'close', 'closes', 'closed', 'misclosure', 'misclose', 'precision', 'traverse error', 'gap'],
     respond: (ctx) => {
       const closure = ctx.pipeline.ok ? ctx.pipeline.validation.closure[0] : undefined;
       return {
@@ -280,6 +346,7 @@ const RULES: readonly Rule[] = [
   },
   {
     test: /\b(coordinate system|crs|datum|projection)\b/i,
+    terms: ['coordinate system', 'crs', 'datum', 'projection', 'epsg', 'grid', 'osgb', 'utm', 'reference system'],
     respond: (ctx) => ({
       id: nextId('msg'),
       role: 'assistant',
@@ -291,6 +358,7 @@ const RULES: readonly Rule[] = [
   },
   {
     test: /\b(export|pdf|dxf|download|print)\b/i,
+    terms: ['export', 'pdf', 'dxf', 'svg', 'download', 'print', 'share', 'issue', 'send'],
     respond: () => ({
       id: nextId('msg'),
       role: 'assistant',
@@ -302,6 +370,7 @@ const RULES: readonly Rule[] = [
   },
   {
     test: /\b(suggest|ai|trust|why.*purple|provenance)\b/i,
+    terms: ['suggestion', 'suggested', 'provenance', 'trust', 'purple', 'confirm', 'unconfirmed', 'where did it come from'],
     respond: () => ({
       id: nextId('msg'),
       role: 'assistant',
@@ -310,6 +379,7 @@ const RULES: readonly Rule[] = [
   },
   {
     test: /\b(point|coordinate|easting|northing|edit data)\b/i,
+    terms: ['point', 'points', 'coordinate', 'coordinates', 'easting', 'northing', 'corner', 'corners', 'station'],
     respond: (ctx) => ({
       id: nextId('msg'),
       role: 'assistant',
@@ -358,6 +428,8 @@ export interface TaskGuide {
   readonly task: TaskName;
   readonly title: string;
   readonly match: RegExp;
+  /** Scored when the pattern misses — see `bestByKeyword`. */
+  readonly terms: readonly string[];
   readonly steps: readonly string[];
   readonly action?: { readonly label: string; readonly intent: Intent };
 }
@@ -367,6 +439,7 @@ export const TASKS: readonly TaskGuide[] = [
     task: 'new-project',
     title: 'Start a new project',
     match: /\b(new|another|start|create|begin|fresh|blank|empty|different|second)\b.{0,20}\b(project|plan|survey|site|job|drawing|one)\b|\bstart (over|again)\b|\bclear (everything|it all|the (plan|drawing))\b/i,
+    terms: ['new project', 'another project', 'new plan', 'new survey', 'new job', 'start over', 'start again', 'from scratch', 'blank', 'fresh', 'clear everything', 'reset'],
     steps: [
       'Tap the site name at the top of the screen to open Project.',
       'Choose “Start a new project”, then confirm.',
@@ -378,6 +451,7 @@ export const TASKS: readonly TaskGuide[] = [
     task: 'name-site',
     title: 'Name the site',
     match: /\b(name|rename|title|address|call)\b.{0,20}\b(site|project|plan|drawing|it)\b|\bwhat.{0,10}(it|this) called\b/i,
+    terms: ['name', 'rename', 'title', 'address', 'call it', 'site name', 'what is it called'],
     steps: [
       'Tap the site name at the top of the screen.',
       'Type the address. It appears in the title block on the exported plan.',
@@ -388,6 +462,7 @@ export const TASKS: readonly TaskGuide[] = [
     task: 'add-points',
     title: 'Enter coordinates by hand',
     match: /\b(add|enter|type|input|key ?in|put in)\b.{0,20}\b(point|points|coordinate|coordinates|corner|corners|easting|northing)\b/i,
+    terms: ['add point', 'add points', 'enter coordinates', 'type coordinates', 'key in', 'by hand', 'manually'],
     steps: [
       'Open Data from the bar at the bottom.',
       'Stay on Points and tap “Add point”.',
@@ -399,6 +474,7 @@ export const TASKS: readonly TaskGuide[] = [
     task: 'paste-table',
     title: 'Paste or import a table',
     match: /\b(paste|import|upload|load|csv|spreadsheet|excel|data ?collector|total ?station|file)\b/i,
+    terms: ['paste', 'import', 'upload', 'csv', 'spreadsheet', 'excel', 'data collector', 'total station', 'file', 'table'],
     steps: [
       'Paste your table straight into this box — I read it here.',
       'Or open Data, choose “Paste table”, and paste or upload a .csv there.',
@@ -413,6 +489,7 @@ export const TASKS: readonly TaskGuide[] = [
     // "photos" — and the next task along matches the word "note", so a near
     // miss here does not fail, it answers the wrong question.
     match: /\b(photo\w*|pic|picture|camera|snap\w*|scan\w*|image|handwritten|field ?book|notebook)\b/i,
+    terms: ['photo', 'photograph', 'picture', 'camera', 'snap', 'scan', 'image', 'handwritten', 'field book', 'notebook'],
     steps: [
       'Tap the camera button beside this box.',
       'Take a straight, close shot of the table of coordinates.',
@@ -423,6 +500,7 @@ export const TASKS: readonly TaskGuide[] = [
     task: 'traverse',
     title: 'Enter a traverse',
     match: /\b(traverse|bearing|bearings|deed|metes|distance and bearing|dms)\b/i,
+    terms: ['traverse', 'bearing', 'bearings', 'deed', 'metes', 'bounds', 'dms', 'legs'],
     steps: [
       'Open Data and choose Traverse.',
       'Type one leg per line: from, to, bearing, distance.',
@@ -437,6 +515,7 @@ export const TASKS: readonly TaskGuide[] = [
     task: 'enter-data',
     title: 'Getting your points in',
     match: /\b(get\w*|bring|put|load|entering|capture|record|start with)\b.{0,25}\b(data|points|coordinates|survey|numbers|measurements|figures)\b|\bdata in\b|\bpoints in\b/i,
+    terms: ['get my data in', 'get my points in', 'load my data', 'bring my data', 'start with my data', 'my numbers', 'my measurements'],
     steps: [
       'Paste a table straight into this box — that is the quickest.',
       'Or photograph a note with the camera button beside it.',
@@ -449,6 +528,7 @@ export const TASKS: readonly TaskGuide[] = [
     task: 'draw-boundary',
     title: 'Draw the boundary',
     match: /\b(draw|sketch|trace|tap out|plot)\b.{0,20}\b(boundary|outline|shape|corner|corners|parcel|plot)\b|\bdraw(ing)? tool\b/i,
+    terms: ['draw', 'sketch', 'trace', 'plot the boundary', 'draw tool', 'tap the corners'],
     steps: [
       'Choose Draw in the toolbar under the drawing.',
       'Tap each corner. A new corner joins the edge it sits nearest, so the shape does not fold over.',
@@ -460,6 +540,7 @@ export const TASKS: readonly TaskGuide[] = [
     task: 'measure',
     title: 'Measure between two points',
     match: /\b(measure|distance between|how far|length between|check the distance)\b/i,
+    terms: ['measure', 'distance between', 'how far', 'ruler'],
     steps: [
       'Choose Measure in the toolbar under the drawing.',
       'Tap two points. The bearing and distance come from the same COGO call the plan’s dimensions use.',
@@ -470,6 +551,7 @@ export const TASKS: readonly TaskGuide[] = [
     task: 'add-building',
     title: 'Add a building',
     match: /\b(building|house|garage|shed|outbuilding|extension|structure)\b/i,
+    terms: ['building', 'house', 'garage', 'shed', 'outbuilding', 'extension', 'structure'],
     steps: [
       'Ask me for one — “add a garage” — and I will place a proposal on the drawing.',
       'It stays a proposal, drawn in purple, until you accept it.',
@@ -481,6 +563,7 @@ export const TASKS: readonly TaskGuide[] = [
     task: 'add-note',
     title: 'Add a note to the plan',
     match: /\b(note|notes|annotation|annotate|caption|remark|text on the plan)\b/i,
+    terms: ['note', 'notes', 'annotation', 'annotate', 'caption', 'remark', 'text on the plan'],
     steps: [
       'Ask me for a note and I will draft one.',
       'It appears as a proposal; accepting it puts it in the plan’s notes block.',
@@ -491,6 +574,7 @@ export const TASKS: readonly TaskGuide[] = [
     task: 'labels',
     title: 'Show or hide labels and the grid',
     match: /\b(label|labels|grid|layer|layers|hide|show|declutter|too busy|crowded)\b/i,
+    terms: ['label', 'labels', 'grid', 'layer', 'layers', 'hide', 'declutter', 'too busy', 'crowded'],
     steps: ['Open Layers from the bar at the bottom.', 'Toggle Labels or Grid.'],
     action: { label: 'Open Layers', intent: { kind: 'open', panel: 'layers' } },
   },
@@ -498,6 +582,7 @@ export const TASKS: readonly TaskGuide[] = [
     task: 'review',
     title: 'Check the drawing',
     match: /\b(check|review|validate|validation|problem|problems|wrong|error|warning|ready)\b/i,
+    terms: ['check', 'review', 'validate', 'validation', 'problem', 'problems', 'wrong', 'error', 'warning', 'is it ready'],
     steps: [
       'Open Review from the status badge at the top, or from the bar at the bottom.',
       'Everything found is listed in plain language, with what to do about it.',
@@ -508,6 +593,7 @@ export const TASKS: readonly TaskGuide[] = [
     task: 'export',
     title: 'Export the plan',
     match: /\b(export|pdf|dxf|svg|download|print|share|send|issue)\b/i,
+    terms: ['export', 'pdf', 'dxf', 'svg', 'download', 'print', 'share', 'issue', 'send'],
     steps: [
       'Open Export from the bar at the bottom.',
       'Choose PDF, DXF or SVG.',
@@ -519,6 +605,7 @@ export const TASKS: readonly TaskGuide[] = [
     task: 'undo',
     title: 'Undo a change',
     match: /\b(undo|redo|revert|go back|mistake|by accident|didn.?t mean)\b/i,
+    terms: ['undo', 'redo', 'revert', 'go back', 'mistake', 'by accident'],
     steps: [
       'Use the ↺ and ↻ buttons at the top right.',
       'Ctrl+Z and Ctrl+Shift+Z work too on a keyboard.',
@@ -526,9 +613,17 @@ export const TASKS: readonly TaskGuide[] = [
   },
 ];
 
-/** Phrasing that asks how to do something, rather than about the survey. */
+/**
+ * Phrasing that asks how to do something, rather than about the survey.
+ *
+ * Deliberately narrower than it first was. "I want to add a garage" and "can I
+ * export this" read as requests to act, not requests for instructions, and
+ * routing them to a guide answered a question the surveyor had not asked —
+ * they get handled by the rules below, which do the thing. Only wording that
+ * can only mean "tell me how" belongs here.
+ */
 const HOW_TO =
-  /\b(how (do|can|would|should) i|how to|how does one|where (do|is|are|can) i|show me how|guide me|walk me|help me|teach me|can i|is there a way|i want to|i.d like to|i need to|let me)\b/i;
+  /\b(how (do|can|would|should) i|how to|how does one|where (do|is|are|can) i|show me how|guide me|walk me through|teach me)\b/i;
 
 function guideMessage(guide: TaskGuide): AssistantMessage {
   return {
@@ -555,6 +650,54 @@ export function findTask(input: string): TaskGuide | undefined {
   return TASKS.find((guide) => guide.match.test(input));
 }
 
+// ---------------------------------------------------------------------------
+// Matching what was actually asked
+// ---------------------------------------------------------------------------
+
+/**
+ * Score every rule and task by the words in the question, and take the best.
+ *
+ * The patterns above are precise, which makes them fast and makes them brittle
+ * in the same stroke. "How many metres is the size of this land" missed every
+ * one of them — the area pattern wanted `size of the land` and got `size of
+ * this land` — and the reply was a menu, which reads as the assistant not
+ * understanding a plain question. It was not understanding it: nothing had been
+ * written down that this sentence could match.
+ *
+ * Scoring loosens that. A question does not have to be phrased any particular
+ * way; it has to contain words the topic is about. Multi-word terms count for
+ * more than single words, because "start over" is better evidence than "start".
+ * Nothing scores, nothing matches — a fallback is still better than a confident
+ * answer to a question nobody asked.
+ */
+export function bestByKeyword(
+  input: string,
+): { readonly kind: 'rule'; readonly rule: Rule } | { readonly kind: 'task'; readonly guide: TaskGuide } | null {
+  const text = ` ${input.toLowerCase().replace(/[^a-z0-9\s]/g, ' ').replace(/\s+/g, ' ')} `;
+  const words = new Set(text.trim().split(' '));
+
+  const score = (terms: readonly string[]): number =>
+    terms.reduce((total, term) => {
+      if (term.includes(' ')) return total + (text.includes(` ${term} `) ? 3 : 0);
+      return total + (words.has(term) ? 1 : 0);
+    }, 0);
+
+  let best: { score: number; value: ReturnType<typeof bestByKeyword> } = { score: 0, value: null };
+
+  // Rules first on a tie: a question about this survey should be answered with
+  // this survey's numbers rather than with instructions for finding them.
+  for (const rule of RULES) {
+    const value = score(rule.terms);
+    if (value > best.score) best = { score: value, value: { kind: 'rule', rule } };
+  }
+  for (const guide of TASKS) {
+    const value = score(guide.terms);
+    if (value > best.score) best = { score: value, value: { kind: 'task', guide } };
+  }
+
+  return best.value;
+}
+
 export function respond(input: string, ctx: AssistantContext): AssistantMessage {
   // "How do I …" wants the steps; "what is …" wants the answer. Both reach the
   // same knowledge, in the order that suits the question.
@@ -572,6 +715,12 @@ export function respond(input: string, ctx: AssistantContext): AssistantMessage 
 
   const guide = findTask(input);
   if (guide) return guideMessage(guide);
+
+  // Nothing was phrased the way anything was written down. Fall back to what
+  // the question is *about* rather than to a menu.
+  const scored = bestByKeyword(input);
+  if (scored?.kind === 'rule') return scored.rule.respond(ctx, null);
+  if (scored?.kind === 'task') return guideMessage(scored.guide);
 
   return capabilitiesMessage();
 }

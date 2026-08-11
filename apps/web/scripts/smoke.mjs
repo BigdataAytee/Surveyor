@@ -433,6 +433,12 @@ for (const [name, viewport] of [
 
   const dataAnswer = await ask('how do I get my points in?');
   expect(/paste|photograph|Data/i.test(dataAnswer), 'guidance: no help getting data in');
+
+  // Asked in the words someone used, which the old patterns missed by one
+  // word — `size of the land` matched, `size of this land` did not.
+  const sizeAnswer = await ask('how many meters is the size of this land');
+  expect(/m²/.test(sizeAnswer), `guidance: no size in "${sizeAnswer.slice(0, 80)}"`);
+  expect(/perimeter/i.test(sizeAnswer), 'guidance: asked in metres, answered without any lengths');
   await shot(page, 'guidance');
   await page.close();
 }

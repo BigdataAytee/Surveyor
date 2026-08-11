@@ -155,6 +155,66 @@ test('a question about the survey still gets the answer, not a tutorial', () => 
   assert.match(closure.text, /closes/);
 });
 
+// ---------------------------------------------------------------------------
+// Phrasing
+// ---------------------------------------------------------------------------
+
+test('how big the land is, however the question is put', () => {
+  // The report: "how many meters is the size of this land" produced a menu.
+  // The area pattern wanted "size of the land" and got "size of this land" —
+  // one word of difference, and the assistant looked like it understood
+  // nothing. Every phrasing here is one somebody would type.
+  for (const question of [
+    'how many meters is the size of this land',
+    'how many metres is this land',
+    'what is the size of this land',
+    'how big is this plot',
+    'whats the acreage',
+    'how large is the parcel',
+    'what are the dimensions',
+    'how long is each side',
+    'give me the perimeter',
+    'total area please',
+  ]) {
+    const answer = respond(question, context()).text;
+    assert.match(answer, /m²/, `no size in the answer to: ${question}`);
+    assert.match(answer, /perimeter/i, `no lengths in the answer to: ${question}`);
+  }
+});
+
+test('the size answer covers area, perimeter and the sides', () => {
+  // "How many metres" has three reasonable answers and the engine has all
+  // three, so guessing between them is a worse bet than giving them.
+  const answer = respond('how many meters is the size of this land', context()).text;
+  assert.match(answer, /600\.0 m²/);
+  assert.match(answer, /0\.0600 hectares/);
+  assert.match(answer, /perimeter is 100\.00 m/);
+  assert.match(answer, /30\.00, 20\.00, 30\.00 and 20\.00 m/);
+  // And it says where the numbers came from, because that is the whole rule.
+  assert.match(answer, /calculated from your corners/);
+});
+
+test('asking for something to be done does it, rather than explaining it', () => {
+  // "I want to" and "can I" read as requests to act. Routing them to a guide
+  // answers a question the surveyor did not ask.
+  const garage = respond('i want to add a garage', context());
+  assert.match(garage.text, /sketched/);
+  assert.deepEqual(garage.actions?.[0]?.intent, { kind: 'suggest-building', label: 'Garage' });
+
+  const pdf = respond('can i get a pdf', context());
+  assert.deepEqual(pdf.actions?.[0]?.intent, { kind: 'open', panel: 'export' });
+});
+
+test('a question with no boundary yet says so instead of reporting nothing', () => {
+  const empty = respond('how big is this land', {
+    ...context(),
+    model: { ...MODEL, points: [], boundary: [] },
+    pipeline: runPipeline({ ...MODEL, points: [], boundary: [] }),
+  });
+  assert.match(empty.text, /nothing on the drawing yet/i);
+  assert.deepEqual(empty.actions?.[0]?.intent, { kind: 'guide', task: 'enter-data' });
+});
+
 test('nothing matched offers the things it can do, not a shrug', () => {
   const message = respond('qwertyuiop', context());
   assert.deepEqual(message.text, capabilitiesMessage().text);

@@ -100,7 +100,14 @@ It is also the way through the interface. `TASKS` in that file is every action
 the app can perform, written in the words someone would ask for it, with the
 steps and — where the app can simply do it — the button that does. Ask "how do I
 start a new project" and you get the steps and the button; ask "how do I measure
-that" and it puts you in the tool. The one thing it cannot do is confirm a
+that" and it puts you in the tool; ask for something to be done rather than
+explained, and it does it.
+
+Matching is by keyword score rather than by phrase pattern (`bestByKeyword`).
+Patterns are precise and brittle in the same stroke: "size of the land" matched
+and "size of this land" did not, one word apart, and the reply to the second was
+a menu. Scoring means a question has to be *about* something, not phrased any
+particular way. The one thing it cannot do is confirm a
 destructive action on your behalf: `new-project` opens the question,
 `confirm-new-project` answers it, and only the second one is missing from the
 vocabulary a model shares.
@@ -139,7 +146,7 @@ so the assistant degrades rather than going silent.
 ## Testing
 
 ```bash
-npm test                                    # 154 tests across contracts, engine and web
+npm test                                    # 158 tests across contracts, engine and web
 npm run smoke --workspace @surveyor/web     # browser flows (needs a preview server)
 ```
 
