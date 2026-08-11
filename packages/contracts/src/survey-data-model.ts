@@ -168,6 +168,36 @@ export interface SurveyNote {
   readonly provenance: Provenance;
 }
 
+/**
+ * A dimension the surveyor placed.
+ *
+ * Boundary dimensions are automatic — every segment of a ring gets one. This is
+ * for everything else a plan has to show and no rule can infer: the setback
+ * from the house to the front boundary, the width of a driveway, the distance
+ * from a tree to a wall.
+ *
+ * It stores which two points it measures between and nothing about the answer.
+ * A dimension carrying its own value would be a second copy of a survey
+ * measurement, free to drift from the first the moment a point is corrected —
+ * and a plan whose printed distance disagrees with its own geometry is worse
+ * than one with no dimension at all. The value is computed by the COGO engine
+ * at draw time, from the same call the boundary dimensions use.
+ */
+export interface Dimension {
+  readonly id: string;
+  readonly from: PointId;
+  readonly to: PointId;
+  /**
+   * How far off the measured line the dimension is drawn, in style-token
+   * steps rather than millimetres — "just clear of it" has to mean the same
+   * at 1:200 and 1:1000, and only the Plan Composer knows the scale.
+   */
+  readonly offsetSteps?: number;
+  /** Whether the bearing prints alongside the distance. */
+  readonly showBearing?: boolean;
+  readonly provenance: Provenance;
+}
+
 // ---------------------------------------------------------------------------
 // Root
 // ---------------------------------------------------------------------------
@@ -207,4 +237,6 @@ export interface SurveyDataModel {
   readonly boundary: readonly BoundaryRing[];
   readonly siteFeatures: readonly SiteFeature[];
   readonly notes: readonly SurveyNote[];
+  /** Dimensions the surveyor placed, beyond the automatic boundary ones. */
+  readonly dimensions?: readonly Dimension[];
 }

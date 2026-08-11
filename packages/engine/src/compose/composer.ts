@@ -531,6 +531,7 @@ const LEGEND_DESCRIPTIONS: Record<StrokeStyle, string> = {
   wall: 'Wall',
   utility: 'Service run',
   annotation: 'Annotation',
+  dimension: 'Dimension',
   'point-marker': 'Survey point',
 };
 

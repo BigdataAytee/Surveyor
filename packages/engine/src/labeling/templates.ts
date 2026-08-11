@@ -32,6 +32,7 @@ import {
   boundsOf,
   distanceBetween,
   internalAngles,
+  inverse,
   type ResolvedRing,
   type ResolvedSegment,
 } from '../cogo.js';
@@ -83,11 +84,49 @@ export type Resolved =
   | {
       readonly kind: 'segment';
       readonly segment: ResolvedSegment;
-      readonly ring: ResolvedRing;
+      /** Absent when the segment is a placed dimension rather than a boundary. */
+      readonly ring?: ResolvedRing;
     }
   | { readonly kind: 'ring'; readonly ring: ResolvedRing }
   | { readonly kind: 'feature'; readonly feature: SiteFeature }
   | { readonly kind: 'attribute'; readonly value: string };
+
+/**
+ * A line between two survey points that is not part of any boundary.
+ *
+ * What a placed dimension measures. The bearing and distance are computed
+ * rather than observed, and `derivedEndpoint` is false because both ends are
+ * known points — nothing here was inferred to reach a position.
+ *
+ * Exported because the placement engine has to resolve the same subject to the
+ * same geometry: a dimension whose text is drawn from one line and whose
+ * position is drawn from another would be a dimension pointing at the wrong
+ * thing.
+ */
+export function looseSegment(
+  from: string,
+  to: string,
+  ctx: LabelContext,
+): ResolvedSegment | null {
+  const start = ctx.model.points.find((p) => p.id === from);
+  const end = ctx.model.points.find((p) => p.id === to);
+  if (!start || !end) return null;
+
+  const reading = inverse(start.coordinates, end.coordinates);
+  // Two points in the same place have no bearing, and a dimension of zero is
+  // not a measurement anyone meant to place.
+  if (reading.distance === 0) return null;
+
+  return {
+    from,
+    to,
+    start: start.coordinates,
+    end: end.coordinates,
+    bearing: reading.bearing,
+    distance: reading.distance,
+    derivedEndpoint: false,
+  };
+}
 
 export function resolveRef(ref: ValueRef, ctx: LabelContext): Resolved | null {
   const [scheme, rest] = splitOnce(ref.ref, ':');
@@ -105,7 +144,14 @@ export function resolveRef(ref: ValueRef, ctx: LabelContext): Resolved | null {
         const segment = ring.segments.find((s) => s.from === from && s.to === to);
         if (segment) return { kind: 'segment', segment, ring };
       }
-      return null;
+
+      // Not a boundary segment, but two points in the model still describe a
+      // line, and a placed dimension is exactly that. The ring is searched
+      // first because a boundary segment carries its observed bearing and
+      // distance and any curve on it — recomputing those from the endpoints
+      // would quietly replace what was measured with what was derived.
+      const loose = looseSegment(from, to, ctx);
+      return loose ? { kind: 'segment', segment: loose } : null;
     }
     case 'ring': {
       const ring = ctx.rings.find((r) => r.ringId === rest);

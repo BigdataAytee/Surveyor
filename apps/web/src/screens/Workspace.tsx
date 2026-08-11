@@ -58,6 +58,7 @@ const LAYER_NAMES: readonly { readonly id: LayerId; readonly label: string }[] =
   { id: 'boundary', label: 'Boundary' },
   { id: 'features', label: 'Site features' },
   { id: 'points', label: 'Survey points' },
+  { id: 'dimensions', label: 'Dimensions' },
 ];
 
 /** Cap height the canvas stylesheet draws labels at, and its paper equivalent. */
@@ -96,6 +97,7 @@ export function Workspace() {
     boundary: { visible: true, locked: false },
     features: { visible: true, locked: false },
     points: { visible: true, locked: false },
+    dimensions: { visible: true, locked: false },
   });
 
   useEffect(() => {
@@ -142,6 +144,9 @@ export function Workspace() {
           return;
         case 'd':
           setTool('draw');
+          return;
+        case 'i':
+          setTool('dimension');
           return;
         case 'v':
           setTool('select');
@@ -337,6 +342,7 @@ export function Workspace() {
               hiddenLayers={LAYER_NAMES.filter((l) => !layers[l.id].visible).map((l) => l.id)}
               lockedLayers={LAYER_NAMES.filter((l) => layers[l.id].locked).map((l) => l.id)}
               onMoveBy={(by) => dispatch({ type: 'transform', transform: { kind: 'move', by } })}
+              onPlaceDimension={(from, to) => dispatch({ type: 'add-dimension', from, to })}
             />
           )}
 
@@ -381,6 +387,7 @@ export function Workspace() {
             { value: 'select', label: 'Select' },
             { value: 'draw', label: 'Draw' },
             { value: 'measure', label: 'Measure' },
+            { value: 'dimension', label: 'Dimension' },
           ]}
         />
       </div>
@@ -599,8 +606,16 @@ function ContextualToolbar({
   // A multi-selection has no single element to describe, but it is exactly
   // when the editing tools matter most — so the bar appears either way.
   const element = selectedId ? selectedElement(pipeline, selectedId) : undefined;
-  const kind =
-    element?.subject.kind === 'segment'
+  // Dimension elements are named `dim_…_line` / `_witness_from` / `_witness_to`
+  // and all share the boundary-segment subject shape, so the id is what tells
+  // them apart from a real boundary line.
+  const dimensionId = selectedId?.startsWith('dim_')
+    ? selectedId.replace(/_(line|witness_from|witness_to)$/, '')
+    : null;
+
+  const kind = dimensionId
+    ? 'Dimension'
+    : element?.subject.kind === 'segment'
       ? 'Boundary line'
       : element?.subject.kind === 'point'
         ? 'Survey point'
@@ -627,7 +642,18 @@ function ContextualToolbar({
             </Button>
           ) : null}
           {/* Only offer deletion for things that can be deleted on their own. */}
-          {element?.subject.kind === 'feature' ? (
+          {dimensionId ? (
+            <Button
+              size="sm"
+              variant="danger"
+              onClick={() => {
+                dispatch({ type: 'remove-dimension', id: dimensionId });
+                onClear();
+              }}
+            >
+              Delete
+            </Button>
+          ) : element?.subject.kind === 'feature' ? (
             <Button
               size="sm"
               variant="danger"

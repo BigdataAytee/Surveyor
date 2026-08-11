@@ -46,6 +46,8 @@ export type StrokeStyle =
   | 'wall'
   | 'utility'
   | 'annotation'
+  /** The witness and dimension lines of a dimension the surveyor placed. */
+  | 'dimension'
   | 'point-marker';
 
 export type PointSymbol =
@@ -87,7 +89,7 @@ export type DrawingElement =
       readonly provenance: Provenance;
     };
 
-export type LayerId = 'boundary' | 'features' | 'points';
+export type LayerId = 'boundary' | 'features' | 'points' | 'dimensions';
 
 export interface DrawingLayer {
   readonly id: LayerId;
@@ -178,11 +180,13 @@ export function buildDrawing(input: DrawingInput): Drawing {
   const boundary = boundaryElements(input.rings);
   const features = featureElements(input.model.siteFeatures);
   const points = pointElements(input.model.points, input.rings);
+  const dimensions = dimensionElements(input.model);
 
   const everyCoordinate = [
     ...boundary.flatMap(coordinatesOf),
     ...features.flatMap(coordinatesOf),
     ...points.flatMap(coordinatesOf),
+    ...dimensions.flatMap(coordinatesOf),
   ];
 
   return {
@@ -190,6 +194,7 @@ export function buildDrawing(input: DrawingInput): Drawing {
       { id: 'boundary', name: 'Boundary', elements: boundary },
       { id: 'features', name: 'Site features', elements: features },
       { id: 'points', name: 'Survey points', elements: points },
+      { id: 'dimensions', name: 'Dimensions', elements: dimensions },
     ],
     bounds:
       everyCoordinate.length > 0
@@ -305,6 +310,112 @@ function featureElements(features: readonly SiteFeature[]): DrawingElement[] {
         break;
     }
   }
+  return elements;
+}
+
+// ---------------------------------------------------------------------------
+// Placed dimensions
+// ---------------------------------------------------------------------------
+
+/**
+ * How far off the measured line a dimension is drawn, per offset step, as a
+ * fraction of the distance it measures.
+ *
+ * Proportional rather than absolute because the alternative is a constant in
+ * metres, and a 2 m offset that sits neatly beside a 40 m boundary swallows a
+ * 1.5 m setback whole. Scaling with the measurement keeps the same visual
+ * relationship at every size.
+ */
+const DIMENSION_OFFSET_FRACTION = 0.08;
+
+/** How long the witness lines run past the dimension line. */
+const WITNESS_OVERSHOOT = 0.25;
+
+/**
+ * The geometry of a dimension: two witness lines and the line between them.
+ *
+ * The text is not here — it is a label specification, so that it goes through
+ * the same placement and collision pass as every other label rather than being
+ * stamped on the drawing where it may land on top of something.
+ *
+ * A dimension whose points have gone is dropped rather than drawn to nowhere.
+ * That happens: a point is deleted, and the dimension that measured to it no
+ * longer measures anything.
+ */
+function dimensionElements(model: SurveyDataModel): readonly DrawingElement[] {
+  const byId = new Map(model.points.map((point) => [point.id, point.coordinates]));
+  const elements: DrawingElement[] = [];
+
+  for (const dimension of model.dimensions ?? []) {
+    const start = byId.get(dimension.from);
+    const end = byId.get(dimension.to);
+    if (!start || !end) continue;
+
+    const dE = end.easting - start.easting;
+    const dN = end.northing - start.northing;
+    const length = Math.hypot(dE, dN);
+    if (length === 0) continue;
+
+    // The unit normal to the measured line. Which side it falls on follows
+    // from the order the two points were given, which is the order the user
+    // picked them in — so reversing a dimension flips it, as it should.
+    const offset = length * DIMENSION_OFFSET_FRACTION * (dimension.offsetSteps ?? 1);
+    const nE = (-dN / length) * offset;
+    const nN = (dE / length) * offset;
+
+    const startOff = { easting: start.easting + nE, northing: start.northing + nN };
+    const endOff = { easting: end.easting + nE, northing: end.northing + nN };
+    const overshoot = {
+      easting: nE * WITNESS_OVERSHOOT,
+      northing: nN * WITNESS_OVERSHOOT,
+    };
+
+    const subject = {
+      kind: 'segment' as const,
+      from: dimension.from,
+      to: dimension.to,
+    };
+
+    elements.push(
+      {
+        kind: 'polyline',
+        id: `${dimension.id}_line`,
+        points: [startOff, endOff],
+        style: 'dimension',
+        subject,
+        provenance: dimension.provenance,
+      },
+      {
+        kind: 'polyline',
+        id: `${dimension.id}_witness_from`,
+        points: [
+          start,
+          {
+            easting: startOff.easting + overshoot.easting,
+            northing: startOff.northing + overshoot.northing,
+          },
+        ],
+        style: 'dimension',
+        subject,
+        provenance: dimension.provenance,
+      },
+      {
+        kind: 'polyline',
+        id: `${dimension.id}_witness_to`,
+        points: [
+          end,
+          {
+            easting: endOff.easting + overshoot.easting,
+            northing: endOff.northing + overshoot.northing,
+          },
+        ],
+        style: 'dimension',
+        subject,
+        provenance: dimension.provenance,
+      },
+    );
+  }
+
   return elements;
 }
 

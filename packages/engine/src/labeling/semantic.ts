@@ -12,6 +12,7 @@
  */
 
 import type {
+  Dimension,
   LabelSpecification,
   SiteFeature,
   SurveyDataModel,
@@ -73,6 +74,9 @@ export function generateBaseLabels(
   for (const feature of input.model.siteFeatures) {
     labels.push(...featureLabels(feature, prefs));
   }
+  for (const dimension of input.model.dimensions ?? []) {
+    labels.push(placedDimensionLabel(dimension));
+  }
 
   // Notes are deliberately not label specifications. They belong to the sheet,
   // not to anything on the drawing, and the Plan Composer lays them out in the
@@ -113,6 +117,40 @@ function segmentLabels(ring: ResolvedRing): LabelSpecification[] {
       provenance: { source: 'calculated' },
     } satisfies LabelSpecification;
   });
+}
+
+/**
+ * The text of a dimension the surveyor placed.
+ *
+ * `required`, like a boundary dimension: it was placed deliberately, so
+ * dropping it under collision pressure would silently discard an instruction.
+ * The user can delete it if they change their mind; the layout engine may not
+ * decide that for them.
+ */
+function placedDimensionLabel(dimension: Dimension): LabelSpecification {
+  return {
+    id: `lbl_${dimension.id}`,
+    subject: { kind: 'segment', from: dimension.from, to: dimension.to },
+    role: 'dimension',
+    content: {
+      mode: 'derived',
+      template: dimension.showBearing ? 'segment.bearingDistance' : 'segment.distance',
+      bindings: { segment: { ref: `segment:${dimension.from}>${dimension.to}` } },
+    },
+    anchor: {
+      relation: 'along',
+      side: 'auto',
+      keepUpright: true,
+      offsetSteps: dimension.offsetSteps ?? 1,
+      preferredOrder: ['along', 'offset', 'leader'],
+    },
+    priority: DEFAULT_PRIORITY.dimension,
+    visibility: 'required',
+    style: { token: 'label.dimension' },
+    // Calculated, whoever asked for it: the number comes from the COGO engine,
+    // not from the person who placed the dimension.
+    provenance: { source: 'calculated' },
+  };
 }
 
 function areaLabel(ring: ResolvedRing): LabelSpecification {

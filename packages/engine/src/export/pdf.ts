@@ -39,6 +39,7 @@ const PENS: Readonly<Record<StrokeStyle, Pen>> = {
   wall: { width: 0.35, rgb: [0.22, 0.25, 0.32] },
   utility: { width: 0.18, rgb: [0.03, 0.57, 0.7], dash: [6, 2] },
   annotation: { width: 0.18, rgb: [0.07, 0.09, 0.15] },
+  dimension: { width: 0.15, rgb: [0.42, 0.45, 0.5] },
   'point-marker': { width: 0.25, rgb: [0.07, 0.09, 0.15] },
 };
 

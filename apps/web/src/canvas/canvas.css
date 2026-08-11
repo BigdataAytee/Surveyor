@@ -109,6 +109,14 @@
   fill: #f0fdf4;
 }
 
+/* A dimension describes the drawing rather than being part of it, so it is
+   the lightest line on the canvas — it must never read as a boundary. */
+.element--dimension .element__shape {
+  stroke: var(--ink-tertiary);
+  stroke-width: 1;
+  fill: none;
+}
+
 /* --- Selection and highlight -------------------------------------------- */
 
 .element.is-selected .element__shape {

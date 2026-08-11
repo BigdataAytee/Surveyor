@@ -50,6 +50,10 @@ const STROKES: Readonly<Record<StrokeStyle, StrokeSpec>> = {
   wall: { width: 0.35, colour: '#374151' },
   utility: { width: 0.18, colour: '#0891b2', dash: '6 2 1 2' },
   annotation: { width: 0.18, colour: '#111827' },
+  // A dimension is the lightest line on the sheet on purpose: it describes
+  // the drawing rather than being part of it, and must never be mistaken
+  // for a boundary or a wall.
+  dimension: { width: 0.15, colour: '#6b7280' },
   'point-marker': { width: 0.25, colour: '#111827' },
 };
 

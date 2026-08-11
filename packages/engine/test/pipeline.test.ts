@@ -460,3 +460,64 @@ test('buildModel fills the collections it was not given', () => {
   assert.deepEqual(built.boundary, []);
   assert.deepEqual(built.notes, []);
 });
+
+// ---------------------------------------------------------------------------
+// Placed dimensions
+// ---------------------------------------------------------------------------
+
+test('a placed dimension is drawn and labelled with a distance nobody typed', () => {
+  // PT1 to PT3 is a diagonal of the 30 x 20 parcel, which is not a boundary
+  // segment — the case the whole feature exists for.
+  const withDimension = model({
+    points: [
+      ...model().points,
+      { id: 'PT9', coordinates: { easting: 534810, northing: 182900 }, provenance: { source: 'measured' } },
+    ],
+    dimensions: [
+      { id: 'dim_1', from: 'PT1', to: 'PT3', provenance: { source: 'user-confirmed' } },
+    ],
+  });
+
+  const result = runPipeline(withDimension);
+  assert.equal(result.ok, true);
+  if (!result.ok) return;
+
+  const dimensions = result.drawing.layers.find((layer) => layer.id === 'dimensions');
+  assert.ok(dimensions, 'there should be a dimensions layer');
+  // A dimension line and two witness lines.
+  assert.equal(dimensions!.elements.length, 3);
+
+  // The line is offset from what it measures rather than drawn on top of it.
+  const line = dimensions!.elements.find((element) => element.id === 'dim_1_line');
+  assert.ok(line && line.kind === 'polyline');
+  const [start] = line!.kind === 'polyline' ? line!.points : [];
+  assert.ok(start);
+  assert.ok(
+    Math.hypot(start!.easting - 534800, start!.northing - 182900) > 1,
+    'the dimension line should stand clear of the points it measures',
+  );
+
+  // And the text is the COGO answer, not a stored number: √(30² + 20²).
+  const label = result.plan.labels.find((placed) => placed.spec.id === 'lbl_dim_1');
+  assert.ok(label, 'the dimension should be labelled');
+  assert.match(label!.text, /36\.06/);
+});
+
+test('a dimension whose point is deleted is dropped rather than drawn to nowhere', () => {
+  const orphaned = model({
+    dimensions: [
+      { id: 'dim_1', from: 'PT1', to: 'PT_GONE', provenance: { source: 'user-confirmed' } },
+    ],
+  });
+
+  const drawing = buildDrawing({
+    model: orphaned,
+    rings: orphaned.boundary.flatMap((ring) => {
+      const computed = computeRing(ring, orphaned.points);
+      return computed.ok ? [computed.ring] : [];
+    }),
+  });
+
+  const dimensions = drawing.layers.find((layer) => layer.id === 'dimensions');
+  assert.equal(dimensions?.elements.length, 0);
+});

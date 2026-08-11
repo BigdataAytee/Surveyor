@@ -32,6 +32,7 @@ import type {
 } from '@surveyor/contracts';
 import { confirm } from '@surveyor/contracts';
 import {
+  distanceBetween,
   inverse,
   mirror,
   mirrorRing,
@@ -122,6 +123,16 @@ export type Action =
   | { type: 'add-point'; point: SurveyPoint }
   | { type: 'add-boundary-point'; at: Coordinates }
   | { type: 'add-feature'; feature: SiteFeature }
+  /**
+   * Place a dimension between two positions on the ground.
+   *
+   * Positions rather than point ids, because the canvas knows where the user
+   * tapped and not what is there. Either end that does not already have a
+   * survey point on it gets one, so the dimension measures between things the
+   * model knows about and follows them when they are corrected.
+   */
+  | { type: 'add-dimension'; from: Coordinates; to: Coordinates }
+  | { type: 'remove-dimension'; id: string }
   | { type: 'update-feature'; id: string; feature: SiteFeature }
   | { type: 'remove-feature'; id: string }
   | { type: 'update-point'; id: string; point: SurveyPoint }
@@ -319,6 +330,16 @@ function wrapBearing(degrees: number): number {
   const wrapped = degrees % 360;
   return wrapped < 0 ? wrapped + 360 : wrapped;
 }
+
+/**
+ * How close two positions must be to count as the same point, in survey units.
+ *
+ * A centimetre. Snapping means a tap on a corner lands on it exactly, so this
+ * is not really a tolerance for near misses — it is there so that floating
+ * point arithmetic on the way through the viewport cannot turn one corner into
+ * two points a nanometre apart.
+ */
+const SAME_POINT_TOLERANCE = 0.01;
 
 /** Next free PTn, so drawing after a deletion does not reuse a name. */
 function nextPointId(existing: readonly SurveyPoint[]): string {
@@ -538,6 +559,57 @@ export function reducer(state: ProjectState, action: Action): ProjectState {
         boundary: order.length >= 3 ? [ringFromPointOrder('ring_1', order)] : [],
       });
     }
+
+    case 'add-dimension': {
+      // Each end becomes a survey point if there is not one there already.
+      // A dimension that measured to a bare coordinate would be a number with
+      // nothing behind it: correct a point and the boundary moves, but that
+      // dimension would stay where it was, quietly disagreeing with the plan.
+      let points = state.model.points;
+
+      const anchor = (at: Coordinates): string => {
+        const existing = points.find(
+          (point) => distanceBetween(point.coordinates, at) < SAME_POINT_TOLERANCE,
+        );
+        if (existing) return existing.id;
+
+        const id = nextPointId(points);
+        points = [
+          ...points,
+          {
+            id,
+            coordinates: at,
+            // Tapped by a person, so confirmed rather than measured.
+            provenance: { source: 'user-confirmed' as const },
+          },
+        ];
+        return id;
+      };
+
+      const from = anchor(action.from);
+      const to = anchor(action.to);
+      if (from === to) return state;
+
+      return commit(state, {
+        ...state.model,
+        points,
+        dimensions: [
+          ...(state.model.dimensions ?? []),
+          {
+            id: `dim_${Date.now()}`,
+            from,
+            to,
+            provenance: { source: 'user-confirmed' as const },
+          },
+        ],
+      });
+    }
+
+    case 'remove-dimension':
+      return commit(state, {
+        ...state.model,
+        dimensions: (state.model.dimensions ?? []).filter((d) => d.id !== action.id),
+      });
 
     case 'add-feature':
       return selectionOf(

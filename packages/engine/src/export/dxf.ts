@@ -29,6 +29,7 @@ const LAYER_COLOUR: Readonly<Record<StrokeStyle, number>> = {
   wall: 8,
   utility: 4,
   annotation: 7,
+  dimension: 8,
   'point-marker': 1,
 };
 

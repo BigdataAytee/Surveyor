@@ -96,9 +96,18 @@ export interface CanvasProps {
    * per frame, so the move is one undo step rather than a hundred.
    */
   readonly onMoveBy?: (by: { readonly de: number; readonly dn: number }) => void;
+  /**
+   * Place a dimension between two ground positions.
+   *
+   * Coordinates rather than point ids, because the second end is often
+   * somewhere with no survey point on it yet — a house corner, the edge of a
+   * drive. Turning a position into a point is the store's job, since only it
+   * knows which points already exist there.
+   */
+  readonly onPlaceDimension?: (from: Coordinates, to: Coordinates) => void;
 }
 
-export type CanvasTool = 'select' | 'draw' | 'measure';
+export type CanvasTool = 'select' | 'draw' | 'measure' | 'dimension';
 
 /** What each snap is called, for the hint under the drawing. */
 const SNAP_LABEL: Readonly<Record<SnapResult['kind'], string>> = {
@@ -133,6 +142,7 @@ export function DrawingCanvas({
   hiddenLayers = [],
   lockedLayers = [],
   onMoveBy,
+  onPlaceDimension,
 }: CanvasProps) {
   // Measurement is ephemeral: it answers a question and is discarded, so it
   // never touches the Survey Data Model.
@@ -522,6 +532,18 @@ export function DrawingCanvas({
         setMeasure((current) => (current.length >= 2 ? [world] : [...current, world]));
         return;
       }
+      if (tool === 'dimension') {
+        // The same two taps as Measure, but the result stays on the plan. The
+        // in-progress line reuses `measure` so the user sees the same rubber
+        // band while placing it — one behaviour, not two that look alike.
+        setMeasure((current) => {
+          if (current.length === 0) return [world];
+          const first = current[0]!;
+          onPlaceDimension?.(first, world);
+          return [];
+        });
+        return;
+      }
 
       // Double tap zooms in about the tap, matching the pinch anchor rule.
       //
@@ -548,6 +570,7 @@ export function DrawingCanvas({
       localPoint,
       onDrawPoint,
       onMoveBy,
+      onPlaceDimension,
       onSelect,
       onSelectMany,
       reachable,
@@ -561,7 +584,7 @@ export function DrawingCanvas({
   // Switching tools abandons a half-finished measurement rather than leaving
   // a stale line floating over the drawing.
   useEffect(() => {
-    if (tool !== 'measure') setMeasure([]);
+    if (tool !== 'measure' && tool !== 'dimension') setMeasure([]);
   }, [tool]);
 
   const onWheel = useCallback(
@@ -778,11 +801,15 @@ export function DrawingCanvas({
             ? snapHint
               ? `Snapped to ${SNAP_LABEL[snapHint.kind]}`
               : 'Tap to place a corner'
-            : measure.length === 0
-              ? 'Tap the first point'
-              : measure.length === 1
-                ? 'Tap the second point'
-                : 'Tap to start a new measurement'}
+            : tool === 'dimension'
+              ? measure.length === 0
+                ? 'Tap what to measure from'
+                : 'Tap what to measure to'
+              : measure.length === 0
+                ? 'Tap the first point'
+                : measure.length === 1
+                  ? 'Tap the second point'
+                  : 'Tap to start a new measurement'}
         </div>
       ) : null}
 

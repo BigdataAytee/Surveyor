@@ -34,7 +34,7 @@ import {
   type ResolvedSegment,
 } from '../cogo.js';
 import { fromMetres, normalizeAzimuth } from '../crs.js';
-import { renderContent, type LabelContext } from './templates.js';
+import { looseSegment, renderContent, type LabelContext } from './templates.js';
 
 // ---------------------------------------------------------------------------
 // Text metrics
@@ -296,7 +296,12 @@ function resolveSubject(
         );
         if (segment) return { kind: 'segment', segment };
       }
-      return null;
+
+      // A placed dimension measures between two points that need not be
+      // neighbours on a boundary. Resolved by the same call the text uses, so
+      // the label cannot end up positioned along one line and reading another.
+      const loose = looseSegment(subject.from, subject.to, ctx);
+      return loose ? { kind: 'segment', segment: loose } : null;
     }
     case 'ring': {
       const ring = ctx.rings.find((r) => r.ringId === subject.ringId);
