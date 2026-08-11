@@ -342,6 +342,46 @@
   margin: var(--space-2) 0;
 }
 
+.layers__row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+  min-height: var(--touch-min);
+}
+
+.layers__name {
+  font-size: var(--text-body);
+}
+
+.layers__controls {
+  display: flex;
+  gap: var(--space-2);
+}
+
+.layers__button {
+  display: grid;
+  place-items: center;
+  width: var(--touch-min);
+  height: var(--touch-min);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--surface);
+  font-size: var(--text-body);
+  cursor: pointer;
+  /* Off is the state worth noticing — a hidden or unlocked layer is a
+     deviation from the drawing as it will export. */
+  opacity: 0.45;
+  transition:
+    opacity var(--duration-micro) var(--ease-standard),
+    border-color var(--duration-micro) var(--ease-standard);
+}
+
+.layers__button.is-on {
+  opacity: 1;
+  border-color: var(--border-strong);
+}
+
 .toggle {
   display: flex;
   align-items: center;

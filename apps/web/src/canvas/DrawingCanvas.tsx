@@ -27,6 +27,7 @@ import {
   snap as findSnap,
   type Drawing,
   type DrawingElement,
+  type LayerId,
   type SnapResult,
 } from '@surveyor/engine';
 
@@ -78,6 +79,23 @@ export interface CanvasProps {
   readonly onDrawPoint?: (at: Coordinates) => void;
   /** Units for the measurement readout. */
   readonly unit?: string;
+  /**
+   * Layers the user has turned off. Not drawn, not hit-tested, not snapped to:
+   * a hidden layer that still catches clicks is worse than one that is visible,
+   * because the thing being grabbed cannot be seen.
+   */
+  readonly hiddenLayers?: readonly LayerId[];
+  /**
+   * Layers the user has locked. Drawn, and snapped to — that is most of what
+   * locking is for — but not selectable and not draggable, so a reference layer
+   * can be worked against without being disturbed.
+   */
+  readonly lockedLayers?: readonly LayerId[];
+  /**
+   * Commit a drag. Called once, on release, with the total displacement — not
+   * per frame, so the move is one undo step rather than a hundred.
+   */
+  readonly onMoveBy?: (by: { readonly de: number; readonly dn: number }) => void;
 }
 
 export type CanvasTool = 'select' | 'draw' | 'measure';
@@ -112,6 +130,9 @@ export function DrawingCanvas({
   tool = 'select',
   onDrawPoint,
   unit = 'm',
+  hiddenLayers = [],
+  lockedLayers = [],
+  onMoveBy,
 }: CanvasProps) {
   // Measurement is ephemeral: it answers a question and is discarded, so it
   // never touches the Survey Data Model.
@@ -129,9 +150,46 @@ export function DrawingCanvas({
   const [band, setBand] = useState<{ readonly from: ScreenPoint; readonly to: ScreenPoint } | null>(
     null,
   );
+  /**
+   * The live displacement of a drag, in survey units.
+   *
+   * The selection is drawn shifted by this while the finger is down and the
+   * model is left alone until release. Dispatching per frame would work, but it
+   * would write a hundred entries into the undo history for one gesture, and
+   * "undo that move" would then mean pressing undo a hundred times.
+   */
+  const [drag, setDrag] = useState<{ readonly de: number; readonly dn: number } | null>(null);
+  /** Where the cursor is on the ground, for the readout. Null on touch. */
+  const [cursor, setCursor] = useState<Coordinates | null>(null);
   const hostRef = useRef<HTMLDivElement>(null);
   const [size, setSize] = useState<Size>({ width: 0, height: 0 });
   const [viewport, setViewport] = useState<Viewport | null>(null);
+
+  const hidden = useMemo(() => new Set(hiddenLayers), [hiddenLayers]);
+  const locked = useMemo(() => new Set(lockedLayers), [lockedLayers]);
+
+  /** What is on screen: everything the user has not turned off. */
+  const visible = useMemo(
+    () =>
+      hidden.size === 0
+        ? drawing
+        : { ...drawing, layers: drawing.layers.filter((layer) => !hidden.has(layer.id)) },
+    [drawing, hidden],
+  );
+
+  /**
+   * What can be picked up: visible and unlocked.
+   *
+   * Kept separate from what is drawn, because locking is exactly the ability to
+   * see something and still not be able to move it by accident.
+   */
+  const reachable = useMemo(
+    () =>
+      locked.size === 0
+        ? visible
+        : { ...visible, layers: visible.layers.filter((layer) => !locked.has(layer.id)) },
+    [locked, visible],
+  );
 
   // --- Sizing --------------------------------------------------------------
 
@@ -196,7 +254,57 @@ export function DrawingCanvas({
     };
   }, []);
 
-  const targets = useMemo(() => snapTargetsFrom(drawing), [drawing]);
+  const targets = useMemo(() => snapTargetsFrom(visible), [visible]);
+
+  /** Everything currently selected, as a set, for "is this being dragged?". */
+  const moving = useMemo(
+    () => new Set(selectedIds.length > 0 ? selectedIds : selectedId ? [selectedId] : []),
+    [selectedId, selectedIds],
+  );
+
+  /**
+   * Snap targets with everything the move disturbs taken out.
+   *
+   * The obvious exclusion is the selection itself: left in, the grabbed corner
+   * is always exactly on itself and the selection sticks to its start however
+   * far the finger travels.
+   *
+   * The one that is easy to miss is geometry that merely *shares* a coordinate
+   * with it. Dragging survey point PT1 moves the boundary corner at PT1 too —
+   * the ring is defined by the point, not by a copy of it — so the boundary's
+   * corner is not a fixed thing to snap to, it is the same thing under another
+   * name. Snapping to it pins every drag at zero, which is exactly the bug this
+   * exists to prevent. An element sharing a vertex with the selection is
+   * therefore dropped whole: if one of its corners is moving, its midpoints and
+   * edges are moving too, and none of them is a landmark.
+   */
+  const staticTargets = useMemo(() => {
+    if (moving.size === 0) return targets;
+
+    const carried = new Set<string>();
+    for (const layer of visible.layers) {
+      for (const element of layer.elements) {
+        if (!moving.has(element.id)) continue;
+        for (const point of element.kind === 'symbol' ? [element.at] : element.points) {
+          carried.add(coordinateKey(point));
+        }
+      }
+    }
+
+    return snapTargetsFrom({
+      ...visible,
+      layers: visible.layers.map((layer) => ({
+        ...layer,
+        elements: layer.elements.filter(
+          (element) =>
+            !moving.has(element.id) &&
+            !(element.kind === 'symbol' ? [element.at] : element.points).some((point) =>
+              carried.has(coordinateKey(point)),
+            ),
+        ),
+      })),
+    });
+  }, [moving, targets, visible]);
 
   /**
    * Where a click at this screen point should actually land.
@@ -222,6 +330,16 @@ export function DrawingCanvas({
     [gridSpacing, size, snapping, targets, viewport],
   );
 
+  /**
+   * The corner the drag is carrying, in survey units.
+   *
+   * A drag needs a point of its own to snap: without one, the only thing that
+   * could latch is the cursor, and a corner that lands "somewhere near" a
+   * neighbouring corner is exactly the sliver a closure check later fails on.
+   * The nearest vertex to the grab is what the user is reaching for.
+   */
+  const dragAnchor = useRef<Coordinates | null>(null);
+
   const onPointerDown = useCallback(
     (event: React.PointerEvent) => {
       const point = localPoint(event);
@@ -231,17 +349,30 @@ export function DrawingCanvas({
       if (pointers.current.size === 1) {
         gesture.current.moved = false;
         gesture.current.start = point;
-        // Box select begins on empty canvas; starting on an object would make
-        // dragging it impossible later.
-        gesture.current.banding =
-          tool === 'select' &&
-          onSelectMany !== undefined &&
-          viewport !== null &&
-          hitTest(point, drawing, viewport, size) === null;
+        dragAnchor.current = null;
+        gesture.current.banding = false;
+
+        const hit =
+          tool === 'select' && viewport ? hitTest(point, reachable, viewport, size) : null;
+
+        // Something already selected is picked up; anything else is not. A drag
+        // that grabbed whatever happened to be under the finger would move
+        // objects the user had not chosen, which on a survey is a silent edit.
+        if (hit !== null && moving.has(hit) && onMoveBy) {
+          dragAnchor.current = nearestVertex(
+            toWorld(point, viewport!, size),
+            reachable,
+            moving,
+          );
+        } else if (hit === null && tool === 'select' && onSelectMany && viewport) {
+          // Box select begins on empty canvas; starting on an object would make
+          // dragging it impossible later.
+          gesture.current.banding = true;
+        }
       }
       gesture.current.lastDistance = null;
     },
-    [localPoint],
+    [localPoint, moving, onMoveBy, onSelectMany, reachable, size, tool, viewport],
   );
 
   const onPointerMove = useCallback(
@@ -285,9 +416,42 @@ export function DrawingCanvas({
         if (dragged) setBand({ from: gesture.current.start, to: point });
         return;
       }
+
+      // Carrying the selection. The displacement is measured on the ground
+      // rather than in pixels so it survives a zoom mid-drag.
+      const anchor = dragAnchor.current;
+      if (anchor) {
+        if (!dragged) return;
+        const from = toWorld(gesture.current.start, viewport, size);
+        const to = toWorld(point, viewport, size);
+        let by = { de: to.easting - from.easting, dn: to.northing - from.northing };
+
+        if (snapping) {
+          const landing = {
+            easting: anchor.easting + by.de,
+            northing: anchor.northing + by.dn,
+          };
+          const tolerance = snapTolerance(viewport.scale, SNAP_RADIUS_PX);
+          const hit = findSnap(landing, targetsNear(staticTargets, landing, tolerance * 4), {
+            tolerance,
+            ...(gridSpacing ? { gridSpacing } : {}),
+          });
+          setSnapHint(hit);
+          if (hit) {
+            by = {
+              de: hit.at.easting - anchor.easting,
+              dn: hit.at.northing - anchor.northing,
+            };
+          }
+        }
+
+        setDrag(by);
+        return;
+      }
+
       setViewport((current) => (current ? panBy(current, dx, dy) : current));
     },
-    [localPoint, size, viewport],
+    [gridSpacing, localPoint, size, snapping, staticTargets, viewport],
   );
 
   const onPointerHover = useCallback(
@@ -295,10 +459,17 @@ export function DrawingCanvas({
       // Touch has no hover, and showing a stale indicator after a tap is worse
       // than showing none.
       if (event.pointerType === 'touch' || pointers.current.size > 0) return;
+      if (!viewport) return;
+
+      const point = localPoint(event);
+      // The readout is live whatever the tool: "where is that corner?" is a
+      // question a surveyor asks constantly, and answering it should not
+      // require switching to Measure and back.
+      setCursor(toWorld(point, viewport, size));
       if (tool === 'select') return;
-      setSnapHint(resolve(localPoint(event)).snapped);
+      setSnapHint(resolve(point).snapped);
     },
-    [localPoint, resolve, tool],
+    [localPoint, resolve, size, tool, viewport],
   );
 
   const onPointerUp = useCallback(
@@ -309,6 +480,19 @@ export function DrawingCanvas({
 
       if (pointers.current.size > 0 || !viewport) return;
 
+      // A finished drag becomes one move, and one undo step.
+      if (dragAnchor.current) {
+        const by = drag;
+        dragAnchor.current = null;
+        setDrag(null);
+        setSnapHint(null);
+        // A drag of nothing is a tap, and falls through to selection below.
+        if (by && (by.de !== 0 || by.dn !== 0)) {
+          onMoveBy?.(by);
+          return;
+        }
+      }
+
       // A finished selection box takes everything it encloses.
       if (gesture.current.banding) {
         const rubber = band;
@@ -316,7 +500,7 @@ export function DrawingCanvas({
         setBand(null);
         if (rubber && gesture.current.moved) {
           onSelectMany?.(
-            enclosedBy(rubber.from, rubber.to, drawing, viewport, size),
+            enclosedBy(rubber.from, rubber.to, reachable, viewport, size),
             event.shiftKey,
           );
           return;
@@ -351,14 +535,27 @@ export function DrawingCanvas({
       }
       gesture.current.lastTapAt = now;
 
-      const hit = hitTest(point, drawing, viewport, size);
+      const hit = hitTest(point, reachable, viewport, size);
       if (event.shiftKey && hit && onSelectMany) {
         onSelectMany([hit], true);
         return;
       }
       onSelect(hit);
     },
-    [band, drawing, localPoint, onDrawPoint, onSelect, onSelectMany, resolve, size, tool, viewport],
+    [
+      band,
+      drag,
+      localPoint,
+      onDrawPoint,
+      onMoveBy,
+      onSelect,
+      onSelectMany,
+      reachable,
+      resolve,
+      size,
+      tool,
+      viewport,
+    ],
   );
 
   // Switching tools abandons a half-finished measurement rather than leaving
@@ -393,6 +590,31 @@ export function DrawingCanvas({
     return buildGrid(viewport, size);
   }, [showGrid, size, viewport]);
 
+  /**
+   * The ground the screen is showing, with a little margin for stroke width.
+   *
+   * Elements whose extent misses it entirely are skipped. On a small site this
+   * saves nothing; on an estate zoomed in on one plot it is the difference
+   * between a canvas that tracks the finger and one that stutters, and the cost
+   * when it does not help is one rectangle comparison per element.
+   *
+   * Overlap is tested against each element's own extent rather than its
+   * vertices, so a boundary line running clear across the view is kept even
+   * though both of its ends are off screen.
+   */
+  const view = useMemo(() => {
+    if (!viewport || size.width === 0) return null;
+    const padding = 24 / viewport.scale;
+    const halfWidth = size.width / 2 / viewport.scale + padding;
+    const halfHeight = size.height / 2 / viewport.scale + padding;
+    return {
+      minE: viewport.centre.easting - halfWidth,
+      maxE: viewport.centre.easting + halfWidth,
+      minN: viewport.centre.northing - halfHeight,
+      maxN: viewport.centre.northing + halfHeight,
+    };
+  }, [size, viewport]);
+
   // Quantised to steps of about 26% so a pinch does not re-run placement on
   // every frame; labels settle to the new zoom rather than shuffling
   // continuously. Dividing by the same factor is what keeps this a rounding of
@@ -423,7 +645,10 @@ export function DrawingCanvas({
         }}
         onPointerUp={onPointerUp}
         onPointerCancel={onPointerUp}
-        onPointerLeave={() => setSnapHint(null)}
+        onPointerLeave={() => {
+          setSnapHint(null);
+          setCursor(null);
+        }}
         onWheel={onWheel}
       >
         {grid ? (
@@ -438,17 +663,23 @@ export function DrawingCanvas({
         ) : null}
 
         {ready
-          ? drawing.layers.map((layer) => (
-              <g key={layer.id} className={`layer layer--${layer.id}`}>
-                {layer.elements.map((element) => (
-                  <Element
-                    key={element.id}
-                    element={element}
-                    project={project}
-                    selected={element.id === selectedId || selectedIds.includes(element.id)}
-                    highlighted={element.id === highlightId}
-                  />
-                ))}
+          ? visible.layers.map((layer) => (
+              <g
+                key={layer.id}
+                className={`layer layer--${layer.id}${locked.has(layer.id) ? ' is-locked' : ''}`}
+              >
+                {layer.elements.map((element) =>
+                  onScreen(element, view) ? (
+                    <Element
+                      key={element.id}
+                      element={element}
+                      project={project}
+                      selected={element.id === selectedId || selectedIds.includes(element.id)}
+                      highlighted={element.id === highlightId}
+                      {...(drag && moving.has(element.id) ? { offset: drag } : {})}
+                    />
+                  ) : null,
+                )}
               </g>
             ))
           : null}
@@ -516,6 +747,31 @@ export function DrawingCanvas({
         </div>
       ) : null}
 
+      {/*
+        Where the cursor is and how far the drag has gone — the readout a CAD
+        user glances at without taking their eyes off the drawing. It reports
+        the ground position, not the screen one, because that is the number
+        that goes on the plan.
+      */}
+      {ready && (cursor || drag) ? (
+        <div className="canvas__readout numeric" role="status">
+          {drag ? (
+            <>
+              <span>
+                Δ {drag.de >= 0 ? '+' : '−'}
+                {Math.abs(drag.de).toFixed(2)} E, {drag.dn >= 0 ? '+' : '−'}
+                {Math.abs(drag.dn).toFixed(2)} N {unit}
+              </span>
+              {snapHint ? <span>· {SNAP_LABEL[snapHint.kind]}</span> : null}
+            </>
+          ) : cursor ? (
+            <span>
+              {cursor.easting.toFixed(2)} E · {cursor.northing.toFixed(2)} N
+            </span>
+          ) : null}
+        </div>
+      ) : null}
+
       {tool !== 'select' ? (
         <div className="canvas__hint" role="status">
           {tool === 'draw'
@@ -565,20 +821,32 @@ type Project = (world: Coordinates) => ScreenPoint;
 
 function Element({
   element,
-  project,
+  project: projectAt,
   selected,
   highlighted,
+  offset,
 }: {
   readonly element: DrawingElement;
   readonly project: Project;
   readonly selected: boolean;
   readonly highlighted: boolean;
+  /** Live drag displacement, in survey units. Absent unless being carried. */
+  readonly offset?: { readonly de: number; readonly dn: number };
 }) {
+  // Shifted on the ground rather than by an SVG transform, so a dragged object
+  // is drawn where it would actually land — the same coordinates the move will
+  // commit — rather than somewhere that merely looks right on screen.
+  const project: Project = offset
+    ? (world) =>
+        projectAt({ easting: world.easting + offset.de, northing: world.northing + offset.dn })
+    : projectAt;
+
   const classes = [
     'element',
     `element--${element.kind === 'symbol' ? 'symbol' : element.style}`,
     selected ? 'is-selected' : '',
     highlighted ? 'is-highlighted' : '',
+    offset ? 'is-dragging' : '',
     element.provenance.source === 'ai-suggested' ? 'is-suggested' : '',
   ]
     .filter(Boolean)
@@ -824,6 +1092,79 @@ function buildGrid(
   }
 
   return { vertical, horizontal };
+}
+
+/**
+ * A coordinate as a key, to the millimetre.
+ *
+ * Survey coordinates that describe the same corner are equal to far better
+ * than a millimetre — they are usually the same number — so this is an
+ * identity test rather than a tolerance, and a millimetre is well below
+ * anything a plan distinguishes.
+ */
+function coordinateKey(at: Coordinates): string {
+  return `${at.easting.toFixed(3)},${at.northing.toFixed(3)}`;
+}
+
+interface WorldRect {
+  readonly minE: number;
+  readonly maxE: number;
+  readonly minN: number;
+  readonly maxN: number;
+}
+
+/** Whether any part of this element could fall inside the view. */
+function onScreen(element: DrawingElement, view: WorldRect | null): boolean {
+  if (!view) return true;
+
+  const points = element.kind === 'symbol' ? [element.at] : element.points;
+  if (points.length === 0) return false;
+
+  let minE = Infinity;
+  let maxE = -Infinity;
+  let minN = Infinity;
+  let maxN = -Infinity;
+  for (const point of points) {
+    if (point.easting < minE) minE = point.easting;
+    if (point.easting > maxE) maxE = point.easting;
+    if (point.northing < minN) minN = point.northing;
+    if (point.northing > maxN) maxN = point.northing;
+  }
+
+  return !(maxE < view.minE || minE > view.maxE || maxN < view.minN || minN > view.maxN);
+}
+
+/**
+ * The corner of the selection nearest the grab.
+ *
+ * Falls back to the grab point itself when the selection has no vertices to
+ * offer, which keeps the drag working — unsnapped — rather than refusing it.
+ */
+function nearestVertex(
+  grab: Coordinates,
+  drawing: Drawing,
+  ids: ReadonlySet<string>,
+): Coordinates {
+  let best: Coordinates | null = null;
+  let bestDistance = Infinity;
+
+  for (const layer of drawing.layers) {
+    for (const element of layer.elements) {
+      if (!ids.has(element.id)) continue;
+      for (const point of element.kind === 'symbol' ? [element.at] : element.points) {
+        const distance = Math.hypot(
+          point.easting - grab.easting,
+          point.northing - grab.northing,
+        );
+        if (distance < bestDistance) {
+          bestDistance = distance;
+          best = point;
+        }
+      }
+    }
+  }
+
+  return best ?? grab;
 }
 
 /**

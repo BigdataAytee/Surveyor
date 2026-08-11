@@ -9,7 +9,7 @@
 
 import { useCallback, useEffect, useMemo, useState } from 'react';
 
-import { contextFor, placeLabels, UNIT_ABBREVIATION } from '@surveyor/engine';
+import { contextFor, placeLabels, UNIT_ABBREVIATION, type LayerId } from '@surveyor/engine';
 
 import { DrawingCanvas, type CanvasTool } from '../canvas/DrawingCanvas.js';
 import { AddSheet } from '../panels/AddSheet.js';
@@ -49,6 +49,17 @@ type Panel =
   | 'projects'
   | null;
 
+interface LayerState {
+  readonly visible: boolean;
+  readonly locked: boolean;
+}
+
+const LAYER_NAMES: readonly { readonly id: LayerId; readonly label: string }[] = [
+  { id: 'boundary', label: 'Boundary' },
+  { id: 'features', label: 'Site features' },
+  { id: 'points', label: 'Survey points' },
+];
+
 /** Cap height the canvas stylesheet draws labels at, and its paper equivalent. */
 const CANVAS_TEXT_PX = 11;
 const CANVAS_TEXT_MM = 2.5;
@@ -72,6 +83,20 @@ export function Workspace() {
   const [theme, setTheme] = useState<'light' | 'dark'>('light');
   const [tool, setTool] = useState<CanvasTool>('select');
   const [snapping, setSnapping] = useState(true);
+  /**
+   * Which layers are shown, and which are held still.
+   *
+   * Two separate ideas that a single toggle would blur. Hiding takes a layer
+   * out of the way; locking leaves it in view to work against — a boundary you
+   * are fitting a building to — while making it impossible to nudge by
+   * accident. A surveyor who has to hide the boundary to stop moving it has
+   * lost the thing they were aligning to.
+   */
+  const [layers, setLayers] = useState<Readonly<Record<LayerId, LayerState>>>({
+    boundary: { visible: true, locked: false },
+    features: { visible: true, locked: false },
+    points: { visible: true, locked: false },
+  });
 
   useEffect(() => {
     document.documentElement.dataset.theme = theme;
@@ -309,6 +334,9 @@ export function Workspace() {
               unit={UNIT_ABBREVIATION[state.model.crs.units]}
               onDrawPoint={(at) => dispatch({ type: 'add-boundary-point', at })}
               onSelect={(id) => dispatch({ type: 'select', id })}
+              hiddenLayers={LAYER_NAMES.filter((l) => !layers[l.id].visible).map((l) => l.id)}
+              lockedLayers={LAYER_NAMES.filter((l) => layers[l.id].locked).map((l) => l.id)}
+              onMoveBy={(by) => dispatch({ type: 'transform', transform: { kind: 'move', by } })}
             />
           )}
 
@@ -417,8 +445,45 @@ export function Workspace() {
         />
       </BottomSheet>
 
-      <BottomSheet open={panel === 'layers'} onClose={() => setPanel(null)} title="Layers">
+      <BottomSheet
+        open={panel === 'layers'}
+        onClose={() => setPanel(null)}
+        title="Layers"
+        subtitle="What is drawn, and what is held still"
+      >
         <div className="layers">
+          {LAYER_NAMES.map(({ id, label }) => (
+            <div key={id} className="layers__row">
+              <span className="layers__name">{label}</span>
+              <div className="layers__controls">
+                <LayerToggle
+                  label={`Show ${label.toLowerCase()}`}
+                  glyph={layers[id].visible ? '👁' : '⃠'}
+                  on={layers[id].visible}
+                  onClick={() =>
+                    setLayers((current) => ({
+                      ...current,
+                      [id]: { ...current[id], visible: !current[id].visible },
+                    }))
+                  }
+                />
+                <LayerToggle
+                  label={`Lock ${label.toLowerCase()}`}
+                  glyph={layers[id].locked ? '🔒' : '🔓'}
+                  on={layers[id].locked}
+                  onClick={() =>
+                    setLayers((current) => ({
+                      ...current,
+                      [id]: { ...current[id], locked: !current[id].locked },
+                    }))
+                  }
+                />
+              </div>
+            </div>
+          ))}
+
+          <hr className="layers__rule" />
+
           <Toggle label="Labels" checked={showLabels} onChange={setShowLabels} />
           <Toggle label="Grid" checked={showGrid} onChange={setShowGrid} />
           <Toggle label="Snapping" checked={snapping} onChange={setSnapping} />
@@ -590,6 +655,37 @@ function selectedElement(
   return (pipeline.drawing?.layers ?? [])
     .flatMap((layer) => layer.elements)
     .find((element) => element.id === id);
+}
+
+/**
+ * One layer control: an icon button that says what it is doing.
+ *
+ * Icon-only, but never label-only to a screen reader — a row of eyes and
+ * padlocks is legible at a glance and meaningless without the `aria-label`.
+ */
+function LayerToggle({
+  label,
+  glyph,
+  on,
+  onClick,
+}: {
+  readonly label: string;
+  readonly glyph: string;
+  readonly on: boolean;
+  readonly onClick: () => void;
+}) {
+  return (
+    <button
+      type="button"
+      className={`layers__button${on ? ' is-on' : ''}`}
+      aria-label={label}
+      aria-pressed={on}
+      title={label}
+      onClick={onClick}
+    >
+      <span aria-hidden="true">{glyph}</span>
+    </button>
+  );
 }
 
 function Toggle({

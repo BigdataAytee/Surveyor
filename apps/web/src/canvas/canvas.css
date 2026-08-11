@@ -295,6 +295,39 @@
   animation: enter-fade var(--duration-normal) var(--ease-standard) both;
 }
 
+/* The coordinate readout. Bottom left, out of the way of the scale bar and
+   the north arrow, where a CAD user's eye already goes for it. */
+.canvas__readout {
+  position: absolute;
+  /* Stacked above the scale bar rather than beside it: both are bottom-left
+     because that is where the eye already goes, and neither may cover the
+     other. */
+  bottom: calc(var(--space-4) + 22px);
+  left: var(--space-4);
+  display: flex;
+  gap: var(--space-2);
+  padding: var(--space-1) var(--space-2);
+  border-radius: var(--radius-sm);
+  background: color-mix(in srgb, var(--surface-raised) 88%, transparent);
+  border: 1px solid var(--border);
+  font-size: var(--text-micro);
+  color: var(--ink-secondary);
+  white-space: nowrap;
+  pointer-events: none;
+}
+
+/* A layer left in view but held still. Faded rather than restyled, so it still
+   reads as the same geometry — it is a reference, not a different object. */
+.layer.is-locked {
+  opacity: 0.55;
+}
+
+/* Carried, not yet committed: drawn as a proposal until the finger lifts. */
+.element.is-dragging .element__shape {
+  opacity: 0.85;
+  stroke-dasharray: 6 3;
+}
+
 .measure__line {
   stroke: var(--accent);
   stroke-width: 1.5;
