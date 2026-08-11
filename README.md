@@ -129,6 +129,29 @@ npx vite preview --port 4173 &
 npm run smoke --workspace @surveyor/web
 ```
 
+## Deploying
+
+[`vercel.json`](./vercel.json) configures the monorepo: Vercel installs at the
+repository root, runs `npm run build` — which builds `contracts`, then `engine`,
+then the app — and serves `apps/web/dist`. Import the repository in Vercel with
+the root directory left as `./` and no further settings are needed.
+
+The app runs entirely in the browser, so a default deployment needs no
+environment variables and no server. Two are optional:
+
+| Variable | Where | Effect |
+|---|---|---|
+| `VITE_ASSISTANT_ENDPOINT` | Build | Set to `/api/assistant` to route the assistant through the model. Unset, the app uses its rule planner. |
+| `ANTHROPIC_API_KEY` | Runtime | Read by [`api/assistant.js`](./api/assistant.js). Unset, that function replies 503 and the app falls back to the rules. |
+
+`api/assistant.js` is the local reference server
+(`apps/web/server/assistant.mjs`) as a serverless function, so the deployed app
+can reach a model without the browser holding a key. It is **unauthenticated and
+spends your Anthropic credits on every call.** The same-origin check in it stops
+another site's browser code from using it; it does not stop anyone with `curl`.
+Put authentication and rate limiting in front of it before pointing real traffic
+at it.
+
 ## Status
 
 The pipeline, the exporters, the workspace and the model seam are built and
