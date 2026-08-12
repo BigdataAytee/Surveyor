@@ -93,6 +93,25 @@ export interface AssistantMessage {
   readonly references?: readonly string[];
   /** Data awaiting the user's confirmation before it enters the survey. */
   readonly offer?: ExtractionOffer;
+  /**
+   * Answered without the model, on a build that has one.
+   *
+   * Set when the network was not there, so the reply came from the rule
+   * planner. It is recorded on the message rather than shown as a banner
+   * because it is a fact about *this answer* — the next one may well reach the
+   * model — and because it is what lets the sheet offer to ask again later.
+   */
+  readonly answeredOffline?: true;
+  /** The question that produced an offline answer, so it can be re-asked. */
+  readonly question?: string;
+  /**
+   * The queued photograph this message is delivering.
+   *
+   * Kept so the queue entry can be cleared once the offer has actually been
+   * used. Clearing it on delivery would lose the transcription for anyone who
+   * closed the sheet before confirming.
+   */
+  readonly queuedNoteId?: string;
 }
 
 // ---------------------------------------------------------------------------

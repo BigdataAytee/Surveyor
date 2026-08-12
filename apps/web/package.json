@@ -14,7 +14,9 @@
     "smoke:classifier": "node scripts/smoke.mjs --classifier",
     "auth": "node server/auth.mjs",
     "build:auth": "vite build --outDir dist-auth",
-    "smoke:auth": "node scripts/smoke-auth.mjs"
+    "smoke:auth": "node scripts/smoke-auth.mjs",
+    "build:offline": "vite build --outDir dist-offline",
+    "smoke:offline": "node scripts/smoke-offline.mjs"
   },
   "dependencies": {
     "@surveyor/contracts": "0.1.0",

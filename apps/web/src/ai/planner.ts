@@ -27,6 +27,7 @@ import {
 import { validateClassification } from './classification.js';
 import { routeClassification } from './route.js';
 import type { Classification } from './scope.js';
+import { connectedFetch, isOnline } from '../state/connectivity.js';
 
 // ---------------------------------------------------------------------------
 // Transport
@@ -106,6 +107,13 @@ export interface ModelPlannerOptions {
   /** Every accepted classification, for logging what the assistant understood. */
   readonly onClassified?: (classification: Classification) => void;
   readonly timeoutMs?: number;
+  /**
+   * Whether the network is worth trying.
+   *
+   * Injected rather than read from `navigator` so this module stays testable
+   * and so the app has one answer to the question rather than several.
+   */
+  readonly online?: () => boolean;
 }
 
 /**
@@ -126,6 +134,23 @@ export function modelPlanner(options: ModelPlannerOptions): Planner {
   return {
     name: 'model',
     reply: async (question, ctx, history = []) => {
+      /*
+       * Offline, the network is not attempted at all.
+       *
+       * It would fail, but it would fail *slowly* — a request with no route
+       * sits until the timeout, and twenty seconds of spinner before the same
+       * answer the rule planner had immediately is the difference between an
+       * app that works on site and one that appears to have frozen.
+       *
+       * The answer is marked so the sheet can say it came from the offline
+       * planner and offer to ask again once there is signal, rather than
+       * quietly presenting a lesser answer as though it were the full one.
+       */
+      if (options.online && !options.online()) {
+        const offline = await fallback.reply(question, ctx);
+        return { ...offline, answeredOffline: true, question };
+      }
+
       try {
         const raw = await withTimeout(
           options.transport({
@@ -148,7 +173,14 @@ export function modelPlanner(options: ModelPlannerOptions): Planner {
         return routeClassification(validated.classification, validated.actions, ctx);
       } catch (error) {
         options.onFallback?.(error instanceof Error ? error.message : String(error));
-        return fallback.reply(question, ctx);
+        const degraded = await fallback.reply(question, ctx);
+        // The attempt is what told us the network is gone — a transport
+        // failure updates the shared connectivity state on its way out — so
+        // this answer earns the same offer to try again that a known-offline
+        // one gets.
+        return options.online && !options.online()
+          ? { ...degraded, answeredOffline: true as const, question }
+          : degraded;
       }
     },
   };
@@ -169,13 +201,17 @@ export function createPlanner(
 
   return modelPlanner({
     transport: httpTransport(endpoint),
+    online: isOnline,
     ...(onFallback ? { onFallback } : {}),
   });
 }
 
 export function httpTransport(endpoint: string): PlannerTransport {
   return async (request) => {
-    const response = await fetch(endpoint, {
+    // `connectedFetch` rather than `fetch`: a request that never reaches the
+    // network is the app's best evidence about the connection, and it is worth
+    // more shared than kept here.
+    const response = await connectedFetch(endpoint, {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify(request),

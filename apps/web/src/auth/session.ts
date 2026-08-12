@@ -13,6 +13,8 @@
  * where it is most needed.
  */
 
+import { connectedFetch } from '../state/connectivity.js';
+
 export interface Account {
   readonly id: string;
   readonly email: string;
@@ -49,7 +51,9 @@ async function call(
 ): Promise<{ readonly status: number; readonly data: Record<string, unknown> }> {
   if (!AUTH_ENDPOINT) throw new Error('Accounts are not configured in this build.');
 
-  const response = await fetch(`${AUTH_ENDPOINT}?action=${encodeURIComponent(action)}`, {
+  // `connectedFetch`, so that a sign-in attempt on a dead network teaches the
+  // rest of the app it is offline instead of each part finding out separately.
+  const response = await connectedFetch(`${AUTH_ENDPOINT}?action=${encodeURIComponent(action)}`, {
     method: options.method ?? 'POST',
     // The session is a cookie, and a cross-origin fetch drops cookies unless
     // asked to carry them. Without this every request looks signed out.

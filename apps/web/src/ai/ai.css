@@ -255,3 +255,24 @@
   justify-content: flex-end;
   gap: var(--space-2);
 }
+
+/*
+ * An answer that came from the offline planner.
+ *
+ * Quiet on purpose. It is a note about where the answer came from, not a
+ * warning — the rule planner is a real assistant and its answers are correct,
+ * just narrower. Making this look like an error would teach people to distrust
+ * the app in exactly the conditions it was built for.
+ */
+.ai__offline {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+  margin-top: var(--space-2);
+}
+
+.ai__offline-note {
+  font-size: var(--text-micro);
+  color: var(--ink-tertiary);
+}

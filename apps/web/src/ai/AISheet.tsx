@@ -33,7 +33,10 @@ import {
 } from './assistant.js';
 import { createPlanner } from './planner.js';
 import { ExtractionCard } from './ExtractionCard.js';
-import { readNoteImage } from './vision.js';
+import { extractEndpoint, prepareNote, transcribeNote } from './vision.js';
+import { dismissNote, noteText, queueNote, transcribedNotes } from './queued-notes.js';
+import { subscribeOutbox } from '../state/outbox.js';
+import { useOnline } from '../state/useConnectivity.js';
 import './ai.css';
 
 export interface AISheetProps {
@@ -70,6 +73,8 @@ export function AISheet({ onOpenPanel, onSelectTool }: AISheetProps) {
     [],
   );
 
+  const online = useOnline();
+
   // The latest assistant message drives which objects pulse on the canvas.
   const latest = messages[messages.length - 1];
   useEffect(() => {
@@ -83,6 +88,47 @@ export function AISheet({ onOpenPanel, onSelectTool }: AISheetProps) {
   function push(message: AssistantMessage): void {
     setMessages((current) => [...current, message]);
   }
+
+  /**
+   * Transcriptions that finished while nobody was looking.
+   *
+   * A note photographed with no signal is read whenever signal returns, which
+   * may be in a van an hour later with this sheet closed. The result waits in
+   * the queue until it has been turned into an offer *and* that offer has been
+   * used — so closing the sheet without confirming brings it back next time
+   * rather than losing it.
+   */
+  const delivered = useRef<Set<string>>(new Set());
+  useEffect(() => {
+    function deliver(): void {
+      for (const item of transcribedNotes()) {
+        if (delivered.current.has(item.id)) continue;
+        const text = noteText(item);
+        if (text === null) continue;
+
+        delivered.current.add(item.id);
+        const note = item.payload as { data: string; mediaType: string };
+        push({
+          id: `msg_${item.id}`,
+          role: 'assistant',
+          text: `I read the photo you took offline (${item.label}). Check the numbers against it before you use them.`,
+          offer: {
+            id: `offer_${item.id}`,
+            text,
+            // The photograph goes back on screen beside the numbers. It is the
+            // one part of a transcription anybody can actually check.
+            imageUrl: `data:${note.mediaType};base64,${note.data}`,
+          },
+          queuedNoteId: item.id,
+        });
+      }
+    }
+
+    deliver();
+    return subscribeOutbox(deliver);
+    // Once. `push` is stable and the subscription does the rest.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   /**
    * Open a blank sheet as a *separate* project.
@@ -237,16 +283,74 @@ export function AISheet({ onOpenPanel, onSelectTool }: AISheetProps) {
     offerExtraction(pasted);
   }
 
+  /**
+   * A photographed note.
+   *
+   * Reading handwriting needs a model, and a model needs a network — this is
+   * the one thing in the app that genuinely cannot happen on site. So when
+   * there is no signal the photograph is kept rather than refused, and read
+   * when there is. Refusing it would mean the surveyor either writes the page
+   * out by hand or photographs it again later, and the second one is not an
+   * option once they have driven away from the site.
+   */
   async function handlePhoto(file: File): Promise<void> {
     const imageUrl = URL.createObjectURL(file);
     push({ id: `msg_${Date.now()}`, role: 'user', text: `📷 ${file.name}` });
-    setThinking(true);
 
-    const result = await readNoteImage(file);
+    if (!extractEndpoint()) {
+      push({
+        id: `msg_${Date.now()}`,
+        role: 'assistant',
+        text:
+          'Reading photos needs the extraction service, which is not set up on ' +
+          'this deployment. You can still paste or type the numbers and I will read those.',
+      });
+      URL.revokeObjectURL(imageUrl);
+      return;
+    }
+
+    setThinking(true);
+    const prepared = await prepareNote(file);
+
+    if (!prepared) {
+      setThinking(false);
+      push({ id: `msg_${Date.now()}`, role: 'assistant', text: 'I could not open that image.' });
+      URL.revokeObjectURL(imageUrl);
+      return;
+    }
+
+    if (!online) {
+      setThinking(false);
+      await queueNote(prepared, file.name);
+      push({
+        id: `msg_${Date.now()}`,
+        role: 'assistant',
+        text:
+          'You are offline, so I have kept the photo. I will read it as soon as ' +
+          'there is signal and show you what I find — you do not need to keep ' +
+          'this open.',
+      });
+      URL.revokeObjectURL(imageUrl);
+      return;
+    }
+
+    const result = await transcribeNote(prepared);
     setThinking(false);
 
     if (!result.ok) {
-      push({ id: `msg_${Date.now()}`, role: 'assistant', text: result.reason });
+      // Unreachable is worth keeping the photo for; a service that read it and
+      // found no coordinates is not, and queueing that would retry a photo
+      // that will be refused identically every time.
+      if (result.unreachable) {
+        await queueNote(prepared, file.name);
+        push({
+          id: `msg_${Date.now()}`,
+          role: 'assistant',
+          text: `${result.reason} I have kept the photo and will read it when the service is back.`,
+        });
+      } else {
+        push({ id: `msg_${Date.now()}`, role: 'assistant', text: result.reason });
+      }
       URL.revokeObjectURL(imageUrl);
       return;
     }
@@ -351,11 +455,14 @@ export function AISheet({ onOpenPanel, onSelectTool }: AISheetProps) {
       <div className="ai__messages" ref={listRef}>
         {messages.map((message, index) => (
           <SlideUp key={message.id} delay={index === messages.length - 1 ? 0 : 0}>
-            <Message message={message} onAction={runAction} />
+            <Message message={message} onAction={runAction} onAskAgain={send} online={online} />
             {message.offer ? (
               <ExtractionCard
                 offer={message.offer}
-                onApplied={(count) =>
+                onApplied={(count) => {
+                  // The queued photograph has now done its job, so it leaves
+                  // the queue. Not a moment sooner.
+                  if (message.queuedNoteId) void dismissNote(message.queuedNoteId);
                   push({
                     id: `msg_${Date.now()}`,
                     role: 'assistant',
@@ -371,8 +478,8 @@ export function AISheet({ onOpenPanel, onSelectTool }: AISheetProps) {
                             state.model.siteFeatures.length === 1 ? '' : 's'
                           } already on the drawing alone — delete them from Layers if they belong to a different site.`
                         : ''),
-                  })
-                }
+                  });
+                }}
               />
             ) : null}
           </SlideUp>
@@ -456,9 +563,13 @@ function summarisePaste(text: string): string {
 function Message({
   message,
   onAction,
+  onAskAgain,
+  online,
 }: {
   readonly message: AssistantMessage;
   readonly onAction: (action: AssistantAction) => void;
+  readonly onAskAgain: (question: string) => void;
+  readonly online: boolean;
 }) {
   if (message.role === 'user') {
     return (
@@ -471,6 +582,25 @@ function Message({
   return (
     <div className="ai__message ai__message--assistant">
       <p>{message.text}</p>
+
+      {/*
+        Said on the answer rather than as a banner, because it is a fact about
+        *this* reply: the offline planner is a real assistant, not an error
+        state, and the next question may well reach the model. The offer to ask
+        again appears only once there is signal — a button that cannot work yet
+        is worse than no button.
+      */}
+      {message.answeredOffline ? (
+        <div className="ai__offline">
+          <span className="ai__offline-note">Answered offline, without the model.</span>
+          {online && message.question ? (
+            <Button size="sm" onClick={() => onAskAgain(message.question ?? '')}>
+              Ask again, now you’re online
+            </Button>
+          ) : null}
+        </div>
+      ) : null}
+
       {message.actions && message.actions.length > 0 ? (
         <div className="ai__actions">
           {message.actions.map((action) => (

@@ -19,9 +19,21 @@
 
 import { looksLikeSurveyData } from '@surveyor/engine';
 
+import { connectedFetch } from '../state/connectivity.js';
+
 export type NoteReading =
   | { readonly ok: true; readonly text: string }
-  | { readonly ok: false; readonly reason: string };
+  | {
+      readonly ok: false;
+      readonly reason: string;
+      /**
+       * The service was never heard from — a dead network or a 5xx.
+       *
+       * Distinct from a refusal, because this is the one kind of failure worth
+       * keeping the photograph for.
+       */
+      readonly unreachable?: true;
+    };
 
 /** Long enough for a page of points, short enough not to be a runaway reply. */
 const MAX_TRANSCRIPT = 20_000;
@@ -33,33 +45,77 @@ const NOT_CONFIGURED =
   'Reading photos needs the extraction service, which is not set up on this ' +
   'deployment. You can still paste or type the numbers and I will read those.';
 
+/** A photograph, shrunk and encoded, ready to be sent — now or in an hour. */
+export interface PreparedNote {
+  /** Base64, without the data-URL prefix. */
+  readonly data: string;
+  readonly mediaType: string;
+}
+
+/**
+ * Get a photograph ready to send, without sending it.
+ *
+ * Split out from `readNoteImage` so that a note photographed with no signal
+ * can be prepared and kept. The expensive, device-bound half — decoding a
+ * camera image and shrinking it — has no reason to wait for a network, and
+ * doing it now means the queued item is a few hundred kilobytes rather than
+ * several megabytes.
+ */
+export async function prepareNote(file: File): Promise<PreparedNote | null> {
+  try {
+    return await downscale(file);
+  } catch {
+    return null;
+  }
+}
+
+export function extractEndpoint(endpoint?: string): string | undefined {
+  // Resolved rather than defaulted, so that passing nothing and being
+  // configured with nothing are the same case — which is what the tests, and
+  // any environment without a build-time `import.meta.env`, need it to be.
+  return endpoint ?? import.meta.env?.VITE_EXTRACT_ENDPOINT;
+}
+
 export async function readNoteImage(
   file: File,
   endpoint?: string,
 ): Promise<NoteReading> {
-  // Resolved rather than defaulted, so that passing nothing and being
-  // configured with nothing are the same case — which is what the tests, and
-  // any environment without a build-time `import.meta.env`, need it to be.
-  const target = endpoint ?? import.meta.env?.VITE_EXTRACT_ENDPOINT;
+  const target = extractEndpoint(endpoint);
   if (!target) return { ok: false, reason: NOT_CONFIGURED };
 
-  let encoded: { data: string; mediaType: string };
-  try {
-    encoded = await downscale(file);
-  } catch {
-    return { ok: false, reason: 'I could not open that image.' };
-  }
+  const encoded = await prepareNote(file);
+  if (!encoded) return { ok: false, reason: 'I could not open that image.' };
+
+  return transcribeNote(encoded, target);
+}
+
+/**
+ * Send a prepared note and check what comes back.
+ *
+ * `unreachable` is reported separately from a refusal, because the two call
+ * for opposite things: an unreachable service is worth trying again later, and
+ * a service that read the photo and found no coordinates on it is not.
+ */
+export async function transcribeNote(
+  note: PreparedNote,
+  endpoint?: string,
+): Promise<NoteReading> {
+  const target = extractEndpoint(endpoint);
+  if (!target) return { ok: false, reason: NOT_CONFIGURED };
 
   let payload: unknown;
   try {
-    const response = await fetch(target, {
+    const response = await connectedFetch(target, {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ image: encoded.data, mediaType: encoded.mediaType }),
+      body: JSON.stringify({ image: note.data, mediaType: note.mediaType }),
     });
     if (!response.ok) {
       return {
         ok: false,
+        // A 5xx is the service having a bad day; a 4xx is this request being
+        // wrong, and no amount of waiting fixes that.
+        ...(response.status >= 500 ? { unreachable: true as const } : {}),
         reason:
           response.status === 503
             ? NOT_CONFIGURED
@@ -70,6 +126,7 @@ export async function readNoteImage(
   } catch {
     return {
       ok: false,
+      unreachable: true,
       reason: 'I could not reach the extraction service. You can paste the numbers instead.',
     };
   }

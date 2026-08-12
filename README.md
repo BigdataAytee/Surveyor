@@ -285,6 +285,61 @@ screen — 1500 features fitted is about 30 ms a frame, because that many SVG
 elements genuinely have to be re-projected. Zooming in fixes it, and that is
 what anyone editing such a drawing does anyway.
 
+## Working offline
+
+A survey happens where the survey is, and that is regularly somewhere with no
+signal. So the app is built to open and work with the radio off, and to catch
+up by itself afterwards.
+
+**It opens.** A service worker (`apps/web/src/offline/sw.js`, precache list
+filled in at build time by `apps/web/scripts/sw-plugin.mjs`) keeps the app
+shell on the device. Without it none of the rest matters: the engines, the
+canvas and the rule planner are all already in the browser, but a failed
+request for `index.html` means a blank page. Requests under `/api/` are never
+cached — a stale answer about who is signed in, or a model reply served from
+cache an hour late, is worse than no answer.
+
+**The assistant answers.** With no network it does not attempt one. That is the
+difference between an answer now and twenty seconds of spinner before the same
+answer, because a request with no route sits until it times out. The reply
+comes from the rule planner, is labelled as an offline answer rather than
+passed off as the full one, and offers to ask again once there is signal. The
+figures are identical either way — every survey value comes from the engines,
+and the model only ever chose which question was being asked.
+
+**Photographs are kept.** Reading handwriting off a photo is the one thing here
+that genuinely needs a server. Refusing it on site means the surveyor writes
+the page out by hand or drives back, so instead the photo goes into a queue
+(`apps/web/src/state/outbox.ts`) and is read when there is signal — even if
+that is an hour later with the tab closed. The transcription then waits in the
+queue until someone has actually confirmed it, and enters the survey through
+the same offer-and-confirm card as one read a second after the shutter.
+Provenance does not get weaker because the network was slow.
+
+The queue holds to four rules, each of which is a test:
+
+| Rule | Why |
+|---|---|
+| Nothing is dropped silently | A queue that discards work is worse than none, because the work looked safe |
+| Nothing is retried forever | After five attempts an item is parked, still visible, no longer hammering a server that has said no |
+| A refusal is not a retry | A photo with no coordinates on it will be refused identically every time |
+| One drain at a time | Two drains racing is how one photograph gets transcribed — and charged for — twice |
+
+Photos go to IndexedDB rather than local storage, which is where the projects
+live. A page of levels is a few hundred kilobytes; queueing three of them in a
+five-megabyte quota shared with someone's surveys means a queued photo can push
+out a plan, and that is the wrong thing to lose.
+
+The header shows a small pill when — and only when — the connection is gone or
+something is waiting. An app that shows a green "online" badge at all times has
+spent a permanent piece of a phone screen on the normal case and taught
+everyone to ignore the one place that would have told them something was wrong.
+
+**What this does not do.** Projects still do not follow you between devices.
+The queue sends work *up* to the services the app already uses; it is not
+account-backed project sync, which needs somewhere on the server to put them.
+`STORAGE_NOTE` in `state/library.ts` says so in the UI too.
+
 ## Accounts and signing in
 
 Accounts are **off by default**, and that is a real mode rather than an
@@ -384,6 +439,25 @@ It stubs the endpoint and checks the half that is ours: the conversation is
 sent, a classification is validated before it is believed, an unsure reading
 asks instead of answering, and the figure in the reply comes from the engine —
 the stub deliberately returns a wrong one, and it must not reach the screen.
+
+Working offline needs a browser and cannot be faked in one: whether a service
+worker installed, whether the app opens with the network genuinely cut, and
+whether a queued photograph survives a reload are all claims about the browser
+rather than about this code. The unit tests cover the decisions; this covers
+whether the browser does what those decisions assume.
+
+```bash
+cd apps/web
+VITE_EXTRACT_ENDPOINT=/__extract npx vite build --outDir dist-offline
+npx vite preview --port 4176 --outDir dist-offline &
+SMOKE_URL=http://127.0.0.1:4176/ npm run smoke:offline
+```
+
+It uses `context.setOffline`, which fails requests the way a dead radio does
+rather than merely aborting them, and drives the whole round trip: the app
+opens with no network, the assistant answers without waiting on one, a
+photograph taken offline is kept, survives a reload, is transcribed exactly
+once when signal returns, and arrives as something to confirm.
 
 Sign-in needs its own pass for the same reason, and against a real server
 rather than a stub — almost everything that goes wrong with sessions goes wrong

@@ -1,0 +1,7 @@
+<!-- Maskable: the art stays inside the middle 80%, because the launcher may
+     crop this to a circle, a squircle, or a rounded square and it has no way
+     to tell us which. -->
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32" width="512" height="512">
+  <rect width="32" height="32" fill="#0f172a"/>
+  <path d="M10 21 L10 12 L23 13.5 L22.2 21 Z" fill="none" stroke="white" stroke-width="1.8" stroke-linejoin="round"/>
+</svg>

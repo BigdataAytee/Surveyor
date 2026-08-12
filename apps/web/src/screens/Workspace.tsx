@@ -40,6 +40,7 @@ import { DocumentsSheet } from '../panels/DocumentsSheet.js';
 import { SettingsSheet } from '../panels/SettingsSheet.js';
 import { HelpSheet } from '../panels/HelpSheet.js';
 import { Sidebar } from '../ui/Sidebar.js';
+import { SyncStatus } from '../ui/SyncStatus.js';
 import { clearAllData, loadPreferences } from '../state/preferences.js';
 import { useAuth } from '../auth/AuthGate.js';
 import { FadeIn } from '../ui/motion.js';
@@ -318,6 +319,12 @@ export function Workspace() {
         </div>
 
         <div className="topbar__right">
+          {/*
+            Renders nothing at all when there is a connection and nothing
+            queued, which is most of the time. It earns its place in a narrow
+            header only when it has something to say.
+          */}
+          <SyncStatus />
           <StatusBadge tone={tone} onClick={() => openPanel('validation')}>
             {nothingYet ? 'Nothing yet' : STATUS_LABEL[status]}
           </StatusBadge>
