@@ -41,7 +41,7 @@ import { SettingsSheet } from '../panels/SettingsSheet.js';
 import { HelpSheet } from '../panels/HelpSheet.js';
 import { Sidebar } from '../ui/Sidebar.js';
 import { SyncStatus } from '../ui/SyncStatus.js';
-import { clearAllData, loadPreferences } from '../state/preferences.js';
+import { clearAllData, launchedAfterErase, loadPreferences } from '../state/preferences.js';
 import { useAuth } from '../auth/AuthGate.js';
 import { FadeIn } from '../ui/motion.js';
 import { useProject } from '../state/store.js';
@@ -103,6 +103,7 @@ export function Workspace() {
   >(null);
   const [menuOpen, setMenuOpen] = useState(false);
   const [signingOut, setSigningOut] = useState(false);
+  const [erasing, setErasing] = useState(false);
   /*
    * Seeded from the stored preferences rather than from constants. These were
    * chosen afresh on every visit — the theme most visibly — which reads as the
@@ -133,6 +134,21 @@ export function Workspace() {
   useEffect(() => {
     document.documentElement.dataset.theme = theme;
   }, [theme]);
+
+  /*
+   * Say that the erase happened.
+   *
+   * It destroys everything and then reloads, and a blank sheet is a perfectly
+   * reasonable thing to be looking at — which means the screen after is not
+   * obviously different from the screen before. Without a word, a destructive
+   * action that appears to have done nothing gets pressed again, or reported
+   * as broken. Both happened.
+   */
+  useEffect(() => {
+    if (launchedAfterErase()) {
+      setToast('Everything on this device has been erased.');
+    }
+  }, []);
 
   // Keyboard shortcuts on desktop; the mobile UI reaches the same actions
   // through the toolbar, so nothing is keyboard-only.
@@ -778,12 +794,16 @@ export function Workspace() {
                 <Button
                   full
                   variant="danger"
+                  disabled={erasing}
                   onClick={() => {
-                    clearAllData();
-                    window.location.reload();
+                    // Awaited before reloading. The queue lives in IndexedDB,
+                    // which is asynchronous, and reloading over the top of an
+                    // unfinished clear leaves the photographs behind.
+                    setErasing(true);
+                    void clearAllData().then(() => window.location.reload());
                   }}
                 >
-                  Log out and erase this device
+                  {erasing ? 'Erasing…' : 'Log out and erase this device'}
                 </Button>
                 <Button full variant="primary" onClick={() => setSigningOut(false)}>
                   Stay logged in

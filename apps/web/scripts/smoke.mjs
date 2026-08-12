@@ -414,6 +414,66 @@ for (const [name, viewport] of [
   await page.close();
 }
 
+// --- Logging out of a device actually empties it ----------------------------
+
+{
+  /*
+   * Reported as "it's still not logging out", and it was right. Erasing the
+   * device cleared storage and the app immediately re-seeded the sample
+   * survey and autosaved it back into the library — so the plan reappeared,
+   * Projects refilled, and the screen after was identical to the screen
+   * before. There is no way to tell that apart from a button that does
+   * nothing.
+   */
+  const page = await open('logout', PHONE);
+
+  await page.locator('.topbar__title').click();
+  await page.waitForTimeout(600);
+  await page.getByLabel('Site name or address').fill('Alpha Farm');
+  await page.waitForTimeout(800);
+  await page.keyboard.press('Escape');
+  await page.waitForTimeout(400);
+
+  await page.getByRole('button', { name: 'Open menu' }).click();
+  await page.waitForTimeout(400);
+  await page.getByRole('button', { name: 'Logout' }).click();
+  await page.waitForTimeout(600);
+  await page.getByRole('button', { name: 'Log out and erase this device' }).click();
+  await page.waitForTimeout(2500);
+
+  const title = (await page.locator('.topbar__title').innerText()) ?? '';
+  expect(!/Alpha Farm/.test(title), 'logout: the erased project came back');
+  expect(
+    !/High Street|Fairview/.test(title),
+    `logout: the sample survey was seeded over the erase — "${title.trim()}"`,
+  );
+
+  // Nothing of ours left on the device, and nothing written straight back.
+  const left = await page.evaluate(() =>
+    Object.keys(window.localStorage).filter((key) => key.startsWith('surveyor.')),
+  );
+  expect(
+    left.length === 0,
+    `logout: ${left.length} key(s) survived or were rewritten — ${left.join(', ')}`,
+  );
+
+  // And it says so, because a blank sheet is not by itself evidence.
+  expect(
+    /erased/i.test((await page.textContent('body')) ?? ''),
+    'logout: nothing on screen confirms the device was erased',
+  );
+  await shot(page, 'logout-erased');
+
+  // The library has to be empty too, not merely the canvas.
+  await page.getByRole('button', { name: 'Open menu' }).click();
+  await page.waitForTimeout(400);
+  await page.getByRole('button', { name: 'Projects' }).click();
+  await page.waitForTimeout(700);
+  const library = (await page.locator('.projects').innerText().catch(() => '')) ?? '';
+  expect(!/Alpha Farm/.test(library), 'logout: the erased project is still in the library');
+  await page.close();
+}
+
 // --- The assistant as a way through the app ---------------------------------
 
 {

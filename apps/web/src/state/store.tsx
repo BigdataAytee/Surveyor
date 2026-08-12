@@ -57,6 +57,7 @@ import {
   saveProject,
 } from './library.js';
 import { SAMPLE_PROJECT } from './sample.js';
+import { launchedAfterErase } from './preferences.js';
 
 // ---------------------------------------------------------------------------
 // Suggestions
@@ -886,6 +887,17 @@ export function reducer(state: ProjectState, action: Action): ProjectState {
  * would otherwise be shown an empty library and conclude their work was gone.
  */
 function restoreLastProject(): { readonly id: string; readonly model: SurveyDataModel } {
+  /*
+   * Straight after "erase this device", a blank sheet — never the sample.
+   *
+   * The sample exists so a first-time visitor has something to judge the tool
+   * by. Someone who has just erased their device is not a first-time visitor,
+   * and handing them a fully drawn survey is indistinguishable from the erase
+   * having failed. That is exactly how it was reported: the plan came back,
+   * the library refilled, and it read as "it is still not logging out".
+   */
+  if (launchedAfterErase()) return { id: newProjectId(), model: EMPTY_MODEL };
+
   const [latest] = listProjects();
   if (latest) {
     const model = loadProject(latest.id);
@@ -931,6 +943,24 @@ export const EMPTY_MODEL: SurveyDataModel = {
   notes: [],
 };
 
+/**
+ * Nothing on the sheet and nothing typed about it.
+ *
+ * The site name counts: someone who has named the plan but not yet drawn it
+ * has started work, and losing that name because no point had been placed yet
+ * would be the app forgetting on purpose.
+ */
+function isUntouched(model: SurveyDataModel): boolean {
+  return (
+    model.points.length === 0 &&
+    model.boundary.length === 0 &&
+    model.siteFeatures.length === 0 &&
+    model.notes.length === 0 &&
+    !model.metadata.siteAddress?.trim() &&
+    !model.metadata.surveyor?.trim()
+  );
+}
+
 interface Store {
   readonly state: ProjectState;
   readonly dispatch: Dispatch<Action>;
@@ -951,6 +981,20 @@ export function ProjectProvider({ children }: { readonly children: ReactNode }) 
   const pipeline = useMemo(() => runPipeline(state.model), [state.model]);
 
   useEffect(() => {
+    /*
+     * An untouched blank sheet is not a project yet.
+     *
+     * The autosave runs on mount, so without this every blank sheet the app
+     * opens — after an erase, or after "start a new project" that nobody then
+     * drew on — is written straight into the library as "Untitled plan". That
+     * turns a deliberate erase into a device with a project on it again, and
+     * fills Projects with entries nobody made.
+     *
+     * The moment anything is drawn or typed it stops being empty and saves
+     * normally, so nothing that could be lost is riding on this.
+     */
+    if (isUntouched(state.model)) return;
+
     saveModel(state.model);
     saveProject(state.projectId, state.model);
   }, [state.model, state.projectId]);

@@ -98,19 +98,68 @@ export function storageUsed(): number {
 }
 
 /**
+ * Set for one page load after a deliberate erase.
+ *
+ * Session storage, because that is exactly the lifetime wanted: it survives
+ * the reload that follows the erase and is gone by the next visit. Deliberately
+ * *not* one of the `surveyor.` local-storage keys, or the erase would wipe the
+ * note that the erase happened.
+ */
+const ERASED_KEY = 'surveyor.erased';
+
+/**
  * Remove everything this app has stored on this device.
  *
  * Only its own keys: another app sharing the origin is not ours to clear.
  * Irreversible, and the callers say so before calling it.
+ *
+ * "Everything" includes the queue in IndexedDB. A photographed field note is
+ * as much someone's data as a project is, and a sheet that promises to remove
+ * every project, its history, its documents and your profile must not quietly
+ * leave photographs of a client's site behind on a shared tablet.
  */
-export function clearAllData(): void {
+export async function clearAllData(): Promise<void> {
   if (typeof window === 'undefined') return;
+
   const ours: string[] = [];
   for (let i = 0; i < window.localStorage.length; i += 1) {
     const key = window.localStorage.key(i);
     if (key?.startsWith('surveyor.')) ours.push(key);
   }
   for (const key of ours) window.localStorage.removeItem(key);
+
+  try {
+    window.sessionStorage.setItem(ERASED_KEY, '1');
+  } catch {
+    // Without the marker the next launch seeds the sample project again. Not
+    // worth failing the erase over — the data is already gone.
+  }
+
+  // Imported here rather than at the top: the queue pulls in IndexedDB, and
+  // preferences are read on the very first render by code that has no business
+  // waiting for a database.
+  const { idbClear } = await import('./idb.js');
+  await idbClear();
+}
+
+/**
+ * Whether this page load is the one straight after an erase.
+ *
+ * Answered once and remembered, so every caller gets the same answer and the
+ * marker is consumed exactly once however many of them there are.
+ */
+let erasedThisLoad: boolean | null = null;
+
+export function launchedAfterErase(): boolean {
+  if (erasedThisLoad === null) {
+    try {
+      erasedThisLoad = window.sessionStorage.getItem(ERASED_KEY) === '1';
+      window.sessionStorage.removeItem(ERASED_KEY);
+    } catch {
+      erasedThisLoad = false;
+    }
+  }
+  return erasedThisLoad;
 }
 
 export function formatBytes(bytes: number): string {

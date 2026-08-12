@@ -152,11 +152,13 @@ export function SettingsSheet({
               full
               variant="danger"
               onClick={() => {
-                clearAllData();
+                // Awaited: the queued photographs are in IndexedDB, and
+                // reloading over an unfinished clear leaves them behind.
+                //
                 // Reloaded rather than patched: half the app is holding state
                 // read from storage that has just ceased to exist, and
                 // starting clean is the honest way back.
-                window.location.reload();
+                void clearAllData().then(() => window.location.reload());
               }}
             >
               Delete everything
