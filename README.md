@@ -342,18 +342,44 @@ account-backed project sync, which needs somewhere on the server to put them.
 
 ## Accounts and signing in
 
-Accounts are **off by default**, and that is a real mode rather than an
-unfinished one. A default build keeps everything on the device, opens straight
-into the drawing, and never asks anyone for anything — which is what a surveyor
-standing in a field with no signal needs. Setting `VITE_AUTH_ENDPOINT` turns
-sign-in on.
+**A deployed build opens on the sign-in page.** `vercel.json` sets
+`VITE_AUTH_ENDPOINT=/api/auth` at build time, so the front door of the
+deployed app is the login screen and the workspace is behind it. There is no
+way round it while the accounts service is answering — a "skip this" button
+beside a working sign-in form is a front door with the key taped to it.
 
-Even then the sign-in screen offers **Work without an account**. Gating the
-drawing tools behind a network round trip would make the app useless exactly
-where it is most needed, so signing in buys an identity, not permission to
-draw. That choice is not remembered between visits: skipping sign-in is a
-decision about right now — no signal, a borrowed phone — and quietly
+A local build with no `VITE_AUTH_ENDPOINT` still opens straight into the
+drawing, which is what `npm run dev` should do.
+
+The gate has exactly one escape, and it is on a different screen. When the
+service cannot be reached at all — no signal, or not deployed — the app says
+so and offers **Work without an account**, because signing in is impossible
+there and telling someone to do it anyway sends them round a loop they cannot
+leave, while the drawing tools need no network. That choice is not remembered
+between visits: skipping sign-in is a decision about right now, and quietly
 remembering it produces an account nobody ever uses again.
+
+Every non-2xx from the endpoint is treated as *unreachable*, never as "signed
+out". The difference is the whole behaviour: signed out means show a form, and
+a form that submits into a 404 or a 503 can never succeed. A build pointed at
+an endpoint that is not deployed used to present exactly that.
+
+### Turning it on
+
+The function needs somewhere to keep accounts, and refuses to run without one
+rather than accepting registrations it will lose. Attach a Redis — **Vercel KV**
+or **Upstash** from the marketplace — and that is the whole setup: both inject
+`KV_REST_API_URL` and `KV_REST_API_TOKEN` (or the `UPSTASH_REDIS_REST_*`
+equivalents), and `api/auth.js` picks either pair up on its own.
+
+Redis over its REST interface rather than a database driver, for one reason: it
+needs nothing but `fetch`. A Postgres adapter would mean a dependency and a
+connection pool, and pools behave badly across serverless invocations.
+Everything the store keeps is small, keyed, and has a natural expiry.
+
+Until a store is attached the endpoint answers 503 and the app shows that
+message with the offline escape, so a half-configured deployment explains
+itself instead of presenting a login that cannot work.
 
 None of the authority lives in the browser. `apps/web/src/auth` asks the server
 who is signed in and shows the answer; the session is an HttpOnly cookie the
@@ -495,10 +521,11 @@ environment variables and no server. The rest are optional:
 | `VITE_ASSISTANT_ENDPOINT` | Build | Set to `/api/assistant` to route the assistant through the model. Unset, the app uses its rule planner. |
 | `VITE_EXTRACT_ENDPOINT` | Build | Set to `/api/extract` to enable reading photographed notes. Unset, the camera button says so and points at pasting. |
 | `ANTHROPIC_API_KEY` | Runtime | Read by both model functions. Unset, they reply 503 and the app falls back to what it can do without them. |
-| `VITE_AUTH_ENDPOINT` | Build | Set to `/api/auth` to turn accounts on. Unset, the app is local-only and never asks anyone to sign in. |
-| `AUTH_STORE` | Runtime | Which store `api/auth.js` uses. Unset, it replies 503 rather than accept accounts it cannot keep. |
+| `VITE_AUTH_ENDPOINT` | Build | **Set to `/api/auth` by `vercel.json`**, so a deployment opens on the sign-in page. Unset — a local build — opens straight into the drawing. |
+| `KV_REST_API_URL` / `KV_REST_API_TOKEN` | Runtime | Injected by Vercel KV or Upstash. This is the whole account-store setup; `UPSTASH_REDIS_REST_*` works too. |
+| `AUTH_STORE` | Runtime | `kv`, or `file` for a single-host self-install. Unset, an attached Redis is used and the endpoint replies 503 if there is none. |
 | `AUTH_STORE_PATH` | Runtime | Where the file store writes, when `AUTH_STORE=file`. Single-host only. |
-| `AUTH_ORIGINS` | Runtime | Comma-separated origins allowed to sign in. Unset, same-origin only. |
+| `AUTH_ORIGINS` | Runtime | Comma-separated origins allowed to sign in. Unset, same-origin only, which is what a normal deployment wants. |
 
 `api/assistant.js` is the local reference server
 (`apps/web/server/assistant.mjs`) as a serverless function; `api/extract.js`

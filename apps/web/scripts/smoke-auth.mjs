@@ -283,27 +283,27 @@ const signedIn = (page) => page.locator('.topbar__title').isVisible().catch(() =
   await context.close();
 }
 
-// --- Working without an account ----------------------------------------------
+// --- There is no way round a sign-in that could succeed ----------------------
 
 {
-  const { context, page } = await device('offline');
-  await page.getByRole('button', { name: 'Work without an account' }).click();
-  await page.waitForTimeout(900);
-  expect(await signedIn(page), 'offline: the escape from the sign-in screen does not open the app');
-  expect(
-    (await page.locator('.element--point').count()) > 0,
-    'offline: the drawing tools are not usable without an account',
-  );
-  await shot(page, 'auth-offline');
+  /*
+   * The gate has to be a gate. While the service is answering, signing in is
+   * possible, so it is the only way through — a "skip this" button beside a
+   * working form is a front door with the key taped to it. The escape belongs
+   * on the unreachable screen below, and only there.
+   */
+  const { context, page } = await device('no-escape');
 
-  // Not remembered. Skipping sign-in is a decision about right now, and a
-  // reload is the next visit.
-  await page.reload({ waitUntil: 'networkidle' });
-  await page.waitForTimeout(900);
   expect(
-    await page.locator('.auth__card').isVisible(),
-    'offline: working without an account was remembered across a reload',
+    (await page.getByRole('button', { name: 'Work without an account' }).count()) === 0,
+    'no-escape: the sign-in screen offers a way past it while the service is answering',
   );
+  expect(
+    (await page.locator('.topbar__title').count()) === 0,
+    'no-escape: the workspace is reachable without signing in',
+  );
+  await shot(page, 'auth-no-escape');
+
   await context.close();
 }
 
@@ -325,6 +325,61 @@ const signedIn = (page) => page.locator('.topbar__title').isVisible().catch(() =
     'unreachable: no way past a server that is down',
   );
   await shot(page, 'auth-unreachable');
+  await context.close();
+}
+
+// --- A deployment with no account store says so -------------------------------
+
+{
+  /*
+   * The failure a real deployment hits first: the sign-in page is turned on
+   * but nothing is attached to keep accounts in, so the function answers 503.
+   * That must not present a sign-in form — a form that submits into a 503 can
+   * never succeed, and the person in front of it has no way to know that.
+   */
+  const { context, page } = await device('unconfigured');
+  await context.route('**/api/auth**', (route) =>
+    route.fulfill({
+      status: 503,
+      contentType: 'application/json',
+      body: JSON.stringify({ error: 'Accounts are not set up on this deployment yet.' }),
+    }),
+  );
+  await page.reload({ waitUntil: 'domcontentloaded' });
+  await page.waitForTimeout(1200);
+
+  expect(
+    (await page.locator('.auth__card form').count()) === 0,
+    'unconfigured: a sign-in form was shown that could never succeed',
+  );
+  expect(
+    /not set up on this deployment/i.test((await page.textContent('body')) ?? ''),
+    'unconfigured: the reason the service refused was not passed on',
+  );
+  await shot(page, 'auth-unconfigured');
+  await context.close();
+}
+
+// --- An endpoint that is not deployed at all ---------------------------------
+
+{
+  // A static host answering a page of HTML with a 200 on it. Parsed as JSON
+  // this is nothing at all, and it used to read as "signed out".
+  const { context, page } = await device('not-deployed');
+  await context.route('**/api/auth**', (route) =>
+    route.fulfill({ status: 200, contentType: 'text/html', body: '<!doctype html><p>hello' }),
+  );
+  await page.reload({ waitUntil: 'domcontentloaded' });
+  await page.waitForTimeout(1200);
+
+  expect(
+    (await page.locator('.auth__card form').count()) === 0,
+    'not-deployed: an endpoint answering HTML was mistaken for a signed-out session',
+  );
+  expect(
+    await page.getByRole('button', { name: 'Work without an account' }).isVisible(),
+    'not-deployed: no way past an endpoint that is not there',
+  );
   await context.close();
 }
 

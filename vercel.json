@@ -3,6 +3,11 @@
   "buildCommand": "npm run build",
   "outputDirectory": "apps/web/dist",
   "framework": "vite",
+  "build": {
+    "env": {
+      "VITE_AUTH_ENDPOINT": "/api/auth"
+    }
+  },
   "headers": [
     {
       "source": "/assets/(.*)",
@@ -10,6 +15,15 @@
         {
           "key": "cache-control",
           "value": "public, max-age=31536000, immutable"
+        }
+      ]
+    },
+    {
+      "source": "/sw.js",
+      "headers": [
+        {
+          "key": "cache-control",
+          "value": "no-cache"
         }
       ]
     }

@@ -19,13 +19,19 @@
  * against.
  *
  * Environment:
- *   AUTH_STORE       'file' (development only) or the name of your adapter
+ *   AUTH_STORE       'kv' for Redis over HTTP, 'file' for development. Unset,
+ *                    a Redis is used if one is attached and this refuses to
+ *                    run if not.
+ *   KV_REST_API_URL / KV_REST_API_TOKEN
+ *                    injected by Vercel KV. `UPSTASH_REDIS_REST_*` also works.
  *   AUTH_STORE_PATH  where the file store writes, when AUTH_STORE=file
- *   AUTH_ORIGINS     comma-separated origins allowed to call this
+ *   AUTH_ORIGINS     comma-separated origins allowed to call this. Unset,
+ *                    same-origin only, which is what a normal deployment wants.
  */
 
 import { handleAuth, securityHeaders } from './_auth-routes.mjs';
 import { createFileStore } from './_auth-store-file.mjs';
+import { kvStoreFromEnv } from './_auth-store-kv.mjs';
 
 let cachedStore = null;
 
@@ -33,8 +39,27 @@ function resolveStore() {
   if (cachedStore) return cachedStore;
 
   const kind = process.env.AUTH_STORE ?? '';
+
+  if (kind === 'kv') {
+    cachedStore = kvStoreFromEnv();
+    return cachedStore;
+  }
+
   if (kind === 'file') {
     cachedStore = createFileStore(process.env.AUTH_STORE_PATH ?? '/tmp/surveyor-auth.json');
+    return cachedStore;
+  }
+
+  /*
+   * Nothing named, but a Redis is attached: use it.
+   *
+   * Adding Upstash or Vercel KV to a project injects its credentials
+   * automatically, and requiring a second, hand-typed variable to say "yes,
+   * the thing I just attached" is a step whose only outcome is a sign-in page
+   * that answers 503 for reasons nobody can see.
+   */
+  if (kind === '') {
+    cachedStore = kvStoreFromEnv();
     return cachedStore;
   }
 
@@ -71,8 +96,9 @@ export default async function handler(request, response) {
     response.writeHead(503, securityHeaders()).end(
       JSON.stringify({
         error:
-          'Accounts are not configured on this deployment. Set AUTH_STORE to a ' +
-          'persistent store before enabling sign-in.',
+          'Accounts are not set up on this deployment yet. Attach a Redis ' +
+          '(Upstash or Vercel KV) to the project — its credentials are picked ' +
+          'up automatically — or set AUTH_STORE.',
       }),
     );
     return;

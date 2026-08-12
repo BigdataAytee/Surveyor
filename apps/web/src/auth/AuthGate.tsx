@@ -11,12 +11,14 @@
  *                             form at someone who is already signed in and
  *                             then replacing it is worse than a moment's wait.
  *   Signed in               — the app.
- *   Signed out              — the sign-in screen, with a way past it, because
- *                             the drawing tools work offline and a surveyor on
- *                             a site with no signal still has a job to do.
- *   Unreachable             — said plainly, with the same way past. Telling
- *                             someone to sign in when the server is down sends
- *                             them round a loop they cannot leave.
+ *   Signed out              — the sign-in screen, and nothing else. When the
+ *                             service is answering, signing in is possible, so
+ *                             it is what happens.
+ *   Unreachable             — said plainly, with a way past it. Signing in is
+ *                             not possible here, and telling someone to do it
+ *                             anyway sends them round a loop they cannot
+ *                             leave — while the drawing tools need no network
+ *                             and a surveyor with no signal still has a job.
  *
  * The account is offered to the rest of the app through context, so nothing
  * has to thread it down by hand.
@@ -120,10 +122,17 @@ export function AuthGate({ children }: { readonly children: ReactNode }) {
             </div>
           </div>
         ) : (
-          <SignIn
-            onSignedIn={(signedIn) => setState({ kind: 'signed-in', account: signedIn })}
-            onContinueOffline={() => setOffline(true)}
-          />
+          /*
+           * No way past this one, and that is the point of it.
+           *
+           * The escape belongs on the "cannot reach the service" screen, where
+           * signing in is impossible and refusing to open the app would strand
+           * a surveyor on a site with no signal. Here the service answered and
+           * said you are not signed in — so signing in is exactly the thing to
+           * do, and a button beside the form offering to skip it makes the
+           * front door decorative.
+           */
+          <SignIn onSignedIn={(signedIn) => setState({ kind: 'signed-in', account: signedIn })} />
         )}
       </AuthContext.Provider>
     );

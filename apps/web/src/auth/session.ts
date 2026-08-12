@@ -48,7 +48,12 @@ export const accountsEnabled = AUTH_ENDPOINT !== null;
 async function call(
   action: string,
   options: { readonly method?: 'GET' | 'POST'; readonly body?: unknown } = {},
-): Promise<{ readonly status: number; readonly data: Record<string, unknown> }> {
+): Promise<{
+  readonly status: number;
+  readonly data: Record<string, unknown>;
+  /** Whether the body was JSON at all. A page of HTML is not an answer. */
+  readonly json: boolean;
+}> {
   if (!AUTH_ENDPOINT) throw new Error('Accounts are not configured in this build.');
 
   // `connectedFetch`, so that a sign-in attempt on a dead network teaches the
@@ -64,21 +69,52 @@ async function call(
   });
 
   let data: Record<string, unknown> = {};
+  let json = false;
   try {
     data = (await response.json()) as Record<string, unknown>;
+    json = true;
   } catch {
     // A response that is not JSON is a server or proxy problem, not an auth
-    // answer. Left empty so the caller reports it as one.
+    // answer — a static host's SPA fallback will happily return a page of HTML
+    // with a 200 on it. Reported as "not an answer" rather than as an empty one.
   }
 
-  return { status: response.status, data };
+  return { status: response.status, data, json };
 }
 
 export async function whoAmI(): Promise<AuthState> {
   if (!accountsEnabled) return { kind: 'disabled' };
 
   try {
-    const { data } = await call('me', { method: 'GET' });
+    const { status, data, json } = await call('me', { method: 'GET' });
+
+    if (!json) {
+      return {
+        kind: 'unreachable',
+        reason:
+          'The accounts service is not answering at that address. It may not be ' +
+          'deployed yet.',
+      };
+    }
+
+    /*
+     * Only a 2xx is an answer about who you are. Anything else is the service
+     * failing to answer at all, and the difference is the whole behaviour:
+     * "signed out" means show a sign-in form, and a form that submits into a
+     * 404 or a 503 can never succeed. A build pointed at an endpoint that is
+     * not deployed, or a deployment with no account store attached, used to
+     * present exactly that — a locked front door with no key cut.
+     */
+    if (status < 200 || status >= 300) {
+      return {
+        kind: 'unreachable',
+        reason:
+          typeof data.error === 'string' && data.error.length > 0
+            ? data.error
+            : `The accounts service answered ${status}.`,
+      };
+    }
+
     const account = data.user as Account | null | undefined;
     return account ? { kind: 'signed-in', account } : { kind: 'signed-out' };
   } catch {

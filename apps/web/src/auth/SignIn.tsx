@@ -10,6 +10,12 @@
  * The client-side rules are a courtesy, not a control: the same request can be
  * made without ever loading this page, which is why the server repeats every
  * one of them.
+ *
+ * There is no way past this screen, by design. It is only ever shown when the
+ * accounts service answered and said nobody is signed in — so signing in is
+ * possible, and it is the thing to do. The "work without an account" escape
+ * lives on the gate's unreachable screen, where signing in is impossible and
+ * refusing to open the app would strand a surveyor with no signal.
  */
 
 import { useEffect, useId, useRef, useState } from 'react';
@@ -21,14 +27,7 @@ import './auth.css';
 /** Mirrors the server's rule, so the message arrives before the request does. */
 const MIN_PASSWORD_LENGTH = 10;
 
-export function SignIn({
-  onSignedIn,
-  onContinueOffline,
-}: {
-  readonly onSignedIn: (account: Account) => void;
-  /** Present only when the app is usable without an account. */
-  readonly onContinueOffline?: () => void;
-}) {
+export function SignIn({ onSignedIn }: { readonly onSignedIn: (account: Account) => void }) {
   const [mode, setMode] = useState<'in' | 'up'>('in');
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
@@ -187,18 +186,6 @@ export function SignIn({
           </button>
         </p>
 
-        {onContinueOffline ? (
-          <>
-            <hr className="auth__rule" />
-            <Button full onClick={onContinueOffline}>
-              Work without an account
-            </Button>
-            <p className="auth__note">
-              The drawing tools work with no signal and no account. Your work stays
-              on this device until you sign in.
-            </p>
-          </>
-        ) : null}
       </form>
     </div>
   );
