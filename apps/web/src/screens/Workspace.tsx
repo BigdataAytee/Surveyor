@@ -41,6 +41,7 @@ import { SettingsSheet } from '../panels/SettingsSheet.js';
 import { HelpSheet } from '../panels/HelpSheet.js';
 import { Sidebar } from '../ui/Sidebar.js';
 import { clearAllData, loadPreferences } from '../state/preferences.js';
+import { useAuth } from '../auth/AuthGate.js';
 import { FadeIn } from '../ui/motion.js';
 import { useProject } from '../state/store.js';
 import './workspace.css';
@@ -92,6 +93,7 @@ const WORKFLOW: readonly { readonly id: string; readonly label: string }[] = [
 
 export function Workspace() {
   const { state, dispatch, pipeline, canUndo, canRedo } = useProject();
+  const auth = useAuth();
   const [panel, setPanel] = useState<Panel>(null);
   const [toast, setToast] = useState<string | null>(null);
   /** Where the context menu is and what it was opened on. */
@@ -718,35 +720,70 @@ export function Workspace() {
       <BottomSheet
         open={signingOut}
         onClose={() => setSigningOut(false)}
-        title="Log out of this device"
+        title={auth.account ? 'Log out' : 'Log out of this device'}
       >
         <div className="panel">
-          <Card tone="sunken">
-            <p className="panel__body">
-              This app has no account to log out of — everything is stored in this
-              browser. Logging out therefore means removing it from this device:
-              every project, its version history, its documents and your profile.
-            </p>
-          </Card>
-          <p className="panel__body">
-            Export anything you need first. This cannot be undone and there is no
-            copy anywhere else.
-          </p>
-          <div className="panel__footer panel__footer--stacked">
-            <Button
-              full
-              variant="danger"
-              onClick={() => {
-                clearAllData();
-                window.location.reload();
-              }}
-            >
-              Log out and erase this device
-            </Button>
-            <Button full variant="primary" onClick={() => setSigningOut(false)}>
-              Stay logged in
-            </Button>
-          </div>
+          {auth.account ? (
+            <>
+              {/*
+                A real session to end. Ending it is not destructive — the
+                surveys stay on this device — so this needs no warning, only
+                a note about what stays behind.
+              */}
+              <Card tone="sunken">
+                <p className="panel__body">
+                  Signed in as <strong>{auth.account.email}</strong>.
+                </p>
+              </Card>
+              <p className="panel__body">
+                Logging out ends this session. Your projects stay on this device and
+                will be here when you sign back in.
+              </p>
+              <div className="panel__footer panel__footer--stacked">
+                <Button full variant="primary" onClick={() => void auth.signOut()}>
+                  Log out
+                </Button>
+                <Button full onClick={() => setSigningOut(false)}>
+                  Stay logged in
+                </Button>
+              </div>
+            </>
+          ) : (
+            <>
+              {/*
+                No session, because this build has no accounts configured or the
+                user chose to work without one. The only meaningful thing "log
+                out" can do is clear the device, which is the real risk on a
+                shared site tablet — and it is destructive, so it says what goes.
+              */}
+              <Card tone="sunken">
+                <p className="panel__body">
+                  You are not signed in to an account — everything is stored in this
+                  browser. Logging out therefore means removing it from this device:
+                  every project, its version history, its documents and your profile.
+                </p>
+              </Card>
+              <p className="panel__body">
+                Export anything you need first. This cannot be undone and there is no
+                copy anywhere else.
+              </p>
+              <div className="panel__footer panel__footer--stacked">
+                <Button
+                  full
+                  variant="danger"
+                  onClick={() => {
+                    clearAllData();
+                    window.location.reload();
+                  }}
+                >
+                  Log out and erase this device
+                </Button>
+                <Button full variant="primary" onClick={() => setSigningOut(false)}>
+                  Stay logged in
+                </Button>
+              </div>
+            </>
+          )}
         </div>
       </BottomSheet>
 

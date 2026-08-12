@@ -15,6 +15,8 @@
 import { useState } from 'react';
 
 import { Button, Card, Field, TextInput } from '../ui/primitives.js';
+import { useAuth } from '../auth/AuthGate.js';
+import { accountsEnabled, changePassword } from '../auth/session.js';
 import { useProject } from '../state/store.js';
 import {
   loadPreferences,
@@ -25,6 +27,7 @@ import './panels.css';
 
 export function ProfileSheet({ onClose }: { readonly onClose: () => void }) {
   const { state, dispatch } = useProject();
+  const auth = useAuth();
   const [profile, setProfile] = useState<SurveyorProfile>(() => loadPreferences().profile);
   const [applied, setApplied] = useState(false);
 
@@ -96,12 +99,35 @@ export function ProfileSheet({ onClose }: { readonly onClose: () => void }) {
         />
       </Field>
 
-      <Card tone="sunken">
-        <p className="panel__body">
-          Saved on this device as you type. Nothing here is sent anywhere —
-          there is no account and no server behind this app.
-        </p>
-      </Card>
+      {/*
+        The account and the plan's signature are two different things, and the
+        panel says so. Someone can be signed in as one person and be drawing a
+        plan a colleague will sign; conflating them would put the wrong name
+        on a legal document.
+      */}
+      {auth.account ? (
+        <Card tone="sunken">
+          <div className="account">
+            <div>
+              <p className="account__email">{auth.account.email}</p>
+              <p className="panel__body">Signed in on this device</p>
+            </div>
+            <Button size="sm" onClick={() => void auth.signOut()}>
+              Log out
+            </Button>
+          </div>
+        </Card>
+      ) : (
+        <Card tone="sunken">
+          <p className="panel__body">
+            {accountsEnabled
+              ? 'You are working without an account. What you type here is saved on this device only.'
+              : 'Saved on this device as you type. This build has no accounts service, so nothing here is sent anywhere.'}
+          </p>
+        </Card>
+      )}
+
+      {auth.account ? <PasswordChange /> : null}
 
       {/*
         Applied on request rather than automatically. The open plan may have
@@ -137,5 +163,91 @@ export function ProfileSheet({ onClose }: { readonly onClose: () => void }) {
         </Button>
       </div>
     </div>
+  );
+}
+
+/**
+ * Changing a password.
+ *
+ * The current one is required, because a session left open on an unattended
+ * machine must not be enough to lock its owner out of their own account.
+ * Succeeding ends every session including this one, so the panel says so
+ * before it happens rather than appearing to have signed the user out by
+ * accident.
+ */
+function PasswordChange() {
+  const auth = useAuth();
+  const [open, setOpen] = useState(false);
+  const [current, setCurrent] = useState('');
+  const [next, setNext] = useState('');
+  const [busy, setBusy] = useState(false);
+  const [problem, setProblem] = useState<string | null>(null);
+
+  if (!open) {
+    return (
+      <Button onClick={() => setOpen(true)}>Change password</Button>
+    );
+  }
+
+  return (
+    <Card tone="sunken">
+      <Field label="Current password">
+        <input
+          className="input"
+          type="password"
+          autoComplete="current-password"
+          aria-label="Current password"
+          value={current}
+          onChange={(event) => setCurrent(event.target.value)}
+        />
+      </Field>
+      <Field label="New password" hint="At least 10 characters">
+        <input
+          className="input"
+          type="password"
+          autoComplete="new-password"
+          aria-label="New password"
+          value={next}
+          onChange={(event) => setNext(event.target.value)}
+        />
+      </Field>
+
+      {problem ? (
+        <p className="panel__body" role="alert">
+          {problem}
+        </p>
+      ) : null}
+
+      <p className="panel__body">
+        Changing it signs you out everywhere, including here.
+      </p>
+
+      <div className="tools__row">
+        <Button
+          full
+          variant="primary"
+          disabled={busy || current.length === 0 || next.length === 0}
+          onClick={() => {
+            setBusy(true);
+            setProblem(null);
+            void changePassword(current, next).then((result) => {
+              setBusy(false);
+              if (!result.ok) {
+                setProblem(result.error ?? 'That did not work.');
+                return;
+              }
+              // The server has already ended the session; the app has to catch
+              // up or it will keep showing an account that no longer answers.
+              void auth.refresh();
+            });
+          }}
+        >
+          {busy ? 'Changing…' : 'Change it'}
+        </Button>
+        <Button full onClick={() => setOpen(false)}>
+          Cancel
+        </Button>
+      </div>
+    </Card>
   );
 }

@@ -1,7 +1,12 @@
 node_modules/
 dist/
+dist-auth/
 dist-test/
 *.tsbuildinfo
+
+# Accounts kept by the local auth server. Real password hashes, even if they
+# are only ever your own — never something to commit.
+.auth-store.json
 
 .DS_Store
 .env

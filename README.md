@@ -285,10 +285,72 @@ screen — 1500 features fitted is about 30 ms a frame, because that many SVG
 elements genuinely have to be re-projected. Zooming in fixes it, and that is
 what anyone editing such a drawing does anyway.
 
+## Accounts and signing in
+
+Accounts are **off by default**, and that is a real mode rather than an
+unfinished one. A default build keeps everything on the device, opens straight
+into the drawing, and never asks anyone for anything — which is what a surveyor
+standing in a field with no signal needs. Setting `VITE_AUTH_ENDPOINT` turns
+sign-in on.
+
+Even then the sign-in screen offers **Work without an account**. Gating the
+drawing tools behind a network round trip would make the app useless exactly
+where it is most needed, so signing in buys an identity, not permission to
+draw. That choice is not remembered between visits: skipping sign-in is a
+decision about right now — no signal, a borrowed phone — and quietly
+remembering it produces an account nobody ever uses again.
+
+None of the authority lives in the browser. `apps/web/src/auth` asks the server
+who is signed in and shows the answer; the session is an HttpOnly cookie the
+page cannot read, because a token JavaScript can read is a token any injected
+script can steal. A login checked in the browser protects nothing.
+
+The server side is in [`api/`](./api), dependency-free and built on
+`node:crypto` alone:
+
+| File | What it is |
+|---|---|
+| `api/_auth-core.mjs` | Hashing, sessions, lockout, cookies. No HTTP, no storage — the part worth testing hard |
+| `api/_auth-store-file.mjs` | A JSON-file store for development and self-hosting. Its header carries the store interface and the equivalent SQL |
+| `api/_auth-routes.mjs` | The five actions, shared verbatim by the serverless function and the local server |
+| `api/auth.js` | The Vercel function |
+| `apps/web/server/auth.mjs` | The same routes over `node:http`, for local work |
+
+What it does, and why:
+
+- **scrypt** (N=32768, r=8, p=1, 64-byte key) with a per-account salt, the
+  parameters stored alongside the hash so they can be raised later without
+  invalidating anyone. Compared with `timingSafeEqual`.
+- **Session tokens are hashed at rest.** Someone who reads the session table
+  still cannot sign in as anybody.
+- **An unknown address and a wrong password give the same answer**, and take
+  the same time — an unregistered address is verified against a generated decoy
+  hash, so the response time does not report whether you have an account here.
+- **Lockout** after 8 failed attempts for 15 minutes, counted per address.
+- **Origin checked** on every state-changing request, as a second lock behind
+  `SameSite=Lax`.
+- **Changing a password ends every session**, including the one that changed
+  it, and requires the current password — a session left open on an unattended
+  machine must not be enough to lock its owner out.
+
+Two honest limits. The file store is for development and single-host
+self-hosting; it is not safe on serverless, where instances do not share a
+disk, which is why `api/auth.js` **refuses to start** (503) rather than
+silently losing accounts when `AUTH_STORE` is not configured for a real
+database. And there is no password reset by email, because that needs a mail
+provider this repository does not have.
+
+Running it locally:
+
+```bash
+npm run auth --workspace @surveyor/web     # accounts on http://127.0.0.1:8788
+VITE_AUTH_ENDPOINT=http://127.0.0.1:8788/api/auth npm run dev --workspace @surveyor/web
+```
+
 ## Testing
 
 ```bash
-npm test                                    # 208 tests across contracts, engine and web
+npm test                                    # 243 tests across contracts, engine, web and auth
 npm run smoke --workspace @surveyor/web     # browser flows (needs a preview server)
 ```
 
@@ -323,6 +385,27 @@ sent, a classification is validated before it is believed, an unsure reading
 asks instead of answering, and the figure in the reply comes from the engine —
 the stub deliberately returns a wrong one, and it must not reach the screen.
 
+Sign-in needs its own pass for the same reason, and against a real server
+rather than a stub — almost everything that goes wrong with sessions goes wrong
+between the browser and the server rather than inside either one:
+
+```bash
+cd apps/web
+VITE_AUTH_ENDPOINT=http://127.0.0.1:8788/api/auth npx vite build --outDir dist-auth
+npx vite preview --port 4174 --outDir dist-auth &
+SMOKE_AUTH_URL=http://127.0.0.1:4174/ npm run smoke:auth
+```
+
+It starts the auth server itself on a throwaway store, so each run begins with
+nobody registered, and then drives the whole thing in a real browser: a build
+with accounts asks before it opens, a short password is refused out loud,
+creating an account signs you in, a reload does not sign you out, the session
+cookie is unreadable from JavaScript, logging out returns to the form, a wrong
+password and an unknown address give the *same* message, the same address
+cannot be registered twice, "work without an account" opens the drawing and is
+not remembered across a reload, and a server that is down says so with a way
+past it.
+
 ## Deploying
 
 [`vercel.json`](./vercel.json) configures the monorepo: Vercel installs at the
@@ -331,13 +414,17 @@ then the app — and serves `apps/web/dist`. Import the repository in Vercel wit
 the root directory left as `./` and no further settings are needed.
 
 The app runs entirely in the browser, so a default deployment needs no
-environment variables and no server. Two are optional:
+environment variables and no server. The rest are optional:
 
 | Variable | Where | Effect |
 |---|---|---|
 | `VITE_ASSISTANT_ENDPOINT` | Build | Set to `/api/assistant` to route the assistant through the model. Unset, the app uses its rule planner. |
 | `VITE_EXTRACT_ENDPOINT` | Build | Set to `/api/extract` to enable reading photographed notes. Unset, the camera button says so and points at pasting. |
-| `ANTHROPIC_API_KEY` | Runtime | Read by both functions. Unset, they reply 503 and the app falls back to what it can do without them. |
+| `ANTHROPIC_API_KEY` | Runtime | Read by both model functions. Unset, they reply 503 and the app falls back to what it can do without them. |
+| `VITE_AUTH_ENDPOINT` | Build | Set to `/api/auth` to turn accounts on. Unset, the app is local-only and never asks anyone to sign in. |
+| `AUTH_STORE` | Runtime | Which store `api/auth.js` uses. Unset, it replies 503 rather than accept accounts it cannot keep. |
+| `AUTH_STORE_PATH` | Runtime | Where the file store writes, when `AUTH_STORE=file`. Single-host only. |
+| `AUTH_ORIGINS` | Runtime | Comma-separated origins allowed to sign in. Unset, same-origin only. |
 
 `api/assistant.js` is the local reference server
 (`apps/web/server/assistant.mjs`) as a serverless function; `api/extract.js`

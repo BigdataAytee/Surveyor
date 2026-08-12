@@ -1,0 +1,161 @@
+/*
+ * The sign-in screen.
+ *
+ * Built from the same tokens as the rest of the app so it reads as the front
+ * door of this product rather than a bolted-on gate.
+ */
+
+.auth {
+  display: grid;
+  place-items: center;
+  min-height: 100%;
+  min-height: 100dvh;
+  padding: var(--space-4);
+  padding-top: max(var(--space-4), env(safe-area-inset-top));
+  padding-bottom: max(var(--space-4), env(safe-area-inset-bottom));
+  background: var(--ground);
+}
+
+.auth__card {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+  width: 100%;
+  max-width: 380px;
+  padding: var(--space-5) var(--space-4);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  background: var(--surface-raised);
+  box-shadow: var(--shadow-lg);
+}
+
+.auth__head {
+  text-align: center;
+}
+
+.auth__title {
+  font-size: var(--text-heading);
+  font-weight: var(--weight-semibold);
+}
+
+.auth__subtitle {
+  margin-top: var(--space-1);
+  font-size: var(--text-caption);
+  color: var(--ink-secondary);
+}
+
+.auth__field {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+.auth__field label {
+  font-size: var(--text-caption);
+  font-weight: var(--weight-medium);
+  color: var(--ink-secondary);
+}
+
+.auth__label-row {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--space-3);
+}
+
+.auth__reveal,
+.auth__link {
+  border: none;
+  background: none;
+  padding: 0;
+  font: inherit;
+  font-size: var(--text-caption);
+  color: var(--accent);
+  cursor: pointer;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+
+/* The reveal control is small text, so it gets a real target around it. */
+.auth__reveal {
+  min-height: 28px;
+  padding: 0 var(--space-1);
+  text-decoration: none;
+}
+
+.auth__hint {
+  font-size: var(--text-micro);
+  color: var(--ink-tertiary);
+}
+
+/* Amber rather than red: the password is not wrong, it is not finished. */
+.auth__hint.is-short {
+  color: var(--warning, #b45309);
+}
+
+.auth__error {
+  font-size: var(--text-caption);
+  color: var(--danger);
+}
+
+.auth__remember {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  min-height: var(--touch-min);
+  font-size: var(--text-caption);
+  color: var(--ink-secondary);
+  cursor: pointer;
+}
+
+.auth__remember input {
+  width: 18px;
+  height: 18px;
+  accent-color: var(--accent);
+}
+
+.auth__switch {
+  text-align: center;
+  font-size: var(--text-caption);
+  color: var(--ink-secondary);
+}
+
+.auth__rule {
+  border: none;
+  border-top: 1px solid var(--border);
+  margin: var(--space-1) 0;
+}
+
+.auth__note {
+  font-size: var(--text-micro);
+  color: var(--ink-tertiary);
+  text-align: center;
+}
+
+/* --- While the session is being checked --------------------------------- */
+
+.auth__waiting {
+  display: grid;
+  place-items: center;
+  min-height: 100dvh;
+  gap: var(--space-3);
+  background: var(--ground);
+  color: var(--ink-secondary);
+  font-size: var(--text-caption);
+}
+
+/* --- The account row in Profile ----------------------------------------- */
+
+.account {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+}
+
+.account__email {
+  font-weight: var(--weight-medium);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}

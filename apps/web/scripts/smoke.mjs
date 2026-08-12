@@ -432,12 +432,21 @@ for (const [name, viewport] of [
   }
 
   // The report this exists for: asked to start a new project, the assistant
-  // used to answer about area and dimensions.
+  // used to answer about area and dimensions. It now asks what to do with the
+  // open plan first, which is the same requirement one step further on — the
+  // open survey must not be thrown away without being asked about.
   const answer = await ask('create a new project');
-  expect(/new project/i.test(answer), `guidance: no help starting a project — got "${answer.slice(0, 80)}"`);
   expect(
-    await page.getByRole('button', { name: 'Start a new project' }).locator('visible=true').first().isVisible(),
-    'guidance: told how to start a project but not offered the button',
+    /blank sheet/i.test(answer) && /keep/i.test(answer),
+    `guidance: no help starting a project — got "${answer.slice(0, 80)}"`,
+  );
+  expect(
+    await page
+      .getByRole('button', { name: 'Save it, then start fresh' })
+      .locator('visible=true')
+      .first()
+      .isVisible(),
+    'guidance: asked about the open plan but not offered a way to keep it',
   );
 
   const dataAnswer = await ask('how do I get my points in?');
@@ -708,7 +717,9 @@ if (CLASSIFIER_ONLY) {
   await shot(page, 'library');
 
   // Reopening has to bring the survey back, not just the name.
-  await page.getByRole('button', { name: 'Open' }).first().click();
+  // `exact` matters: the header's menu button is labelled "Open menu", and a
+  // loose match picks that instead — it sits earlier in the document.
+  await page.getByRole('button', { name: 'Open', exact: true }).first().click();
   await page.waitForTimeout(900);
   expect(
     /Alpha Farm/.test((await page.locator('.topbar__title').innerText()) ?? ''),
