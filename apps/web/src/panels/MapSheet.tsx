@@ -16,9 +16,10 @@
 
 import { useMemo, useState } from 'react';
 
-import { toGeoJson, wgs84Copy, type Wgs84Plan } from '@surveyor/engine';
+import { toGeoJson, wgs84Copy } from '@surveyor/engine';
 
 import { Button, Card, StatusBadge } from '../ui/primitives.js';
+import { TileMap } from './TileMap.js';
 import { useProject } from '../state/store.js';
 import './panels.css';
 
@@ -63,13 +64,13 @@ export function MapSheet({ onClose }: { readonly onClose: () => void }) {
           <strong>±{transformation.accuracyMetres} m</strong>.
         </p>
         <p className="panel__body">
-          Good enough to find the site on a satellite image. Not a substitute
-          for the survey: the {state.model.crs.name} coordinates are the record,
-          and they have not been altered.
+          Good enough to find the site on imagery. Not a substitute for the
+          survey: the {state.model.crs.name} coordinates are the record, and
+          they have not been altered.
         </p>
       </Card>
 
-      <Outline plan={plan} />
+      <TileMap plan={plan} />
 
       <div className="mapview__grid">
         <span className="panel__caption">Centre</span>
@@ -79,8 +80,9 @@ export function MapSheet({ onClose }: { readonly onClose: () => void }) {
       </div>
 
       {/*
-        Opening a real map means leaving the app, which is the honest way to do
-        it without shipping a tile layer that would not work on site anyway.
+        The map above is the app's own. These hand the position to something
+        else — a phone's map application for driving to the site, or a colleague
+        who wants a link rather than a file.
       */}
       <div className="tools__row">
         <Button
@@ -168,71 +170,6 @@ export function MapSheet({ onClose }: { readonly onClose: () => void }) {
         </Button>
       </div>
     </div>
-  );
-}
-
-/**
- * The parcel, drawn in degrees.
- *
- * A shape rather than a map: no tiles, because tiles need a network and this
- * app is used where there is none, and because a basemap nobody asked for is a
- * dependency and a third-party request on every open. What this answers is
- * "did the conversion produce the right shape in the right place", which is
- * the question a surveyor actually has.
- */
-function Outline({ plan }: { readonly plan: Wgs84Plan }) {
-  const [west, south, east, north] = plan.bounds;
-
-  // Degrees of longitude are shorter than degrees of latitude away from the
-  // equator, so the box is corrected for it. Without this a square parcel in
-  // Lagos is drawn noticeably wide.
-  const cosLat = Math.cos(((north + south) / 2) * (Math.PI / 180));
-  const width = Math.max((east - west) * cosLat, 1e-9);
-  const height = Math.max(north - south, 1e-9);
-  const pad = 0.08;
-
-  const x = (longitude: number) =>
-    (((longitude - west) * cosLat) / width) * (1 - 2 * pad) * 100 + pad * 100;
-  // SVG y grows downward and latitude grows upward.
-  const y = (latitude: number) =>
-    (1 - (latitude - south) / height) * (1 - 2 * pad) * 100 + pad * 100;
-
-  return (
-    <svg
-      className="mapview__outline"
-      viewBox="0 0 100 100"
-      preserveAspectRatio="xMidYMid meet"
-      role="img"
-      aria-label="The parcel in WGS 84, for mapping"
-    >
-      {plan.features.map((feature) =>
-        feature.positions.length < 2 ? null : (
-          <polyline
-            key={feature.id}
-            className="mapview__feature"
-            points={feature.positions
-              .map((p) => `${x(p.longitude)},${y(p.latitude)}`)
-              .join(' ')}
-          />
-        ),
-      )}
-      {plan.rings.map((ring) => (
-        <polygon
-          key={ring.id}
-          className="mapview__ring"
-          points={ring.positions.map((p) => `${x(p.longitude)},${y(p.latitude)}`).join(' ')}
-        />
-      ))}
-      {plan.points.map((point) => (
-        <circle
-          key={point.id}
-          className="mapview__point"
-          cx={x(point.longitude)}
-          cy={y(point.latitude)}
-          r={1.4}
-        />
-      ))}
-    </svg>
   );
 }
 

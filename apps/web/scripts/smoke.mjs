@@ -36,8 +36,11 @@ const TABLET = { width: 820, height: 1180 };
 const LANDSCAPE = { width: 852, height: 393 };
 const DESKTOP = { width: 1440, height: 900 };
 
-async function open(name, viewport) {
+async function open(name, viewport, before) {
   const page = await browser.newPage({ viewport, hasTouch: true });
+  // A hook for anything that has to be in place before the first load —
+  // stubbing a third-party request, most usefully.
+  if (before) await before(page);
   // Each check starts from the sample project, not whatever a previous one
   // persisted, or the tests would depend on the order they ran in. The
   // sentinel keeps this to the first load: the persistence check reloads the
@@ -424,7 +427,25 @@ for (const [name, viewport] of [
    * back would be invisible in the engine tests and obvious here, because the
    * plan's own coordinates would move.
    */
-  const page = await open('map', PHONE);
+  const page = await open('map', PHONE, async (target) => {
+    /*
+     * A one-pixel PNG for every tile. This suite must not depend on a tile
+     * provider being reachable, and what is being checked is the grid — which
+     * tiles were asked for and where they were put — not the imagery.
+     */
+    // On the context, not the page: the service worker fetches these, and a
+    // page-level route does not see a request the worker made.
+    await target.context().route('**/tile.openstreetmap.org/**', (route) =>
+      route.fulfill({
+        status: 200,
+        contentType: 'image/png',
+        body: Buffer.from(
+          'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==',
+          'base64',
+        ),
+      }),
+    );
+  });
 
   const gridBefore = await page.evaluate(() =>
     Object.keys(window.localStorage)
@@ -443,8 +464,44 @@ for (const [name, viewport] of [
   expect(/Minna to WGS 84/.test(shown), 'map: the transformation is not named on screen');
   expect(/±3 m/.test(shown), 'map: the accuracy of the conversion is not stated');
   expect(
-    (await page.locator('.mapview__ring').count()) > 0,
-    'map: the parcel was not drawn in the mapping frame',
+    (await page.locator('.tilemap__ring').count()) > 0,
+    'map: the parcel was not drawn over the map',
+  );
+
+  // Tiles, from the stub. Their URLs are the check that the tile grid computed
+  // sane indices — a wrong zoom or a negative index is a 404 on somebody
+  // else's server rather than a visible fault here.
+  const tiles = await page.locator('.tilemap__tile').evaluateAll((nodes) =>
+    nodes.map((node) => node.getAttribute('src')),
+  );
+  expect(tiles.length > 0, 'map: no tiles were requested');
+  for (const src of tiles) {
+    const parts = /\/(\d+)\/(\d+)\/(\d+)\.png$/.exec(src ?? '');
+    expect(parts !== null, `map: a tile URL was not filled in — "${src}"`);
+    if (parts) {
+      const [z, x, y] = [Number(parts[1]), Number(parts[2]), Number(parts[3])];
+      expect(z >= 15 && z <= 21, `map: a 30 m parcel was fitted at zoom ${z}`);
+      expect(x >= 0 && x < 2 ** z && y >= 0 && y < 2 ** z, `map: tile ${z}/${x}/${y} is off the grid`);
+    }
+  }
+
+  // The attribution is a licence condition, not decoration.
+  expect(
+    /OpenStreetMap/.test((await page.locator('.tilemap__attribution').innerText()) ?? ''),
+    'map: the tile source is not credited',
+  );
+
+  // Dragging moves the map and nothing else.
+  const box = await page.locator('.tilemap__viewport').boundingBox();
+  const beforeDrag = await page.locator('.tilemap__tile').first().getAttribute('style');
+  await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
+  await page.mouse.down();
+  await page.mouse.move(box.x + box.width / 2 - 90, box.y + box.height / 2 - 40, { steps: 8 });
+  await page.mouse.up();
+  await page.waitForTimeout(500);
+  expect(
+    (await page.locator('.tilemap__tile').first().getAttribute('style')) !== beforeDrag,
+    'map: dragging did not move the map',
   );
   await shot(page, 'map-wgs84');
 

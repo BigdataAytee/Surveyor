@@ -85,6 +85,61 @@ function mustBeFresh(url) {
   return url.pathname.startsWith('/api/') || url.pathname.startsWith('/__');
 }
 
+/*
+ * Tiles live in their own cache, with their own budget.
+ *
+ * Kept apart from the app shell so that clearing one does not take the other,
+ * and so the cap below can never evict the files the app needs to start.
+ */
+const TILE_CACHE = 'surveyor-tiles';
+
+/** Roughly a few sites' worth at a couple of zoom levels each. */
+const TILE_LIMIT = 400;
+
+function isTile(url) {
+  // Recognised by shape rather than by host, so a deployment pointing at its
+  // own provider gets the same behaviour without this file knowing the name.
+  return /\/\d{1,2}\/\d+\/\d+(\.(png|jpe?g|webp|avif))?(\?|$)/.test(url.pathname);
+}
+
+async function tileResponse(request) {
+  const cache = await caches.open(TILE_CACHE);
+  const cached = await cache.match(request);
+
+  /*
+   * Cache first. Tiles at a given zoom and position do not change in any way
+   * that matters to a survey, and going to the network first would mean a slow
+   * or flaky connection is worse than none — which is precisely backwards for
+   * where this app is used.
+   */
+  if (cached) return cached;
+
+  try {
+    const response = await fetch(request);
+    // `opaque` is what a no-cors image response looks like. Its status cannot
+    // be read, so it is stored only when the request was made in a mode that
+    // gives us a real one.
+    if (response.ok || response.type === 'opaque') {
+      void cache.put(request, response.clone()).then(() => trimTiles(cache));
+    }
+    return response;
+  } catch (error) {
+    // No tile and no network. Returning the error lets the page's `onerror`
+    // fire, which is what puts "map imagery needs a connection" on screen.
+    throw error;
+  }
+}
+
+/** Keep the tile cache to its budget, oldest first. */
+async function trimTiles(cache) {
+  const keys = await cache.keys();
+  if (keys.length <= TILE_LIMIT) return;
+  // `keys()` is in insertion order, so the front of it is the least recently
+  // added. Not true LRU, and it does not need to be: the cost of dropping a
+  // tile is one request.
+  await Promise.all(keys.slice(0, keys.length - TILE_LIMIT).map((key) => cache.delete(key)));
+}
+
 self.addEventListener('fetch', (event) => {
   const request = event.request;
 
@@ -93,6 +148,23 @@ self.addEventListener('fetch', (event) => {
   if (request.method !== 'GET') return;
 
   const url = new URL(request.url);
+
+  /*
+   * Map tiles, which are the one cross-origin thing worth keeping.
+   *
+   * A surveyor who looked at the site's imagery with signal should see it
+   * again without — that is the same site, the same afternoon, and refetching
+   * is not an option out there. Only tiles that were actually viewed are kept,
+   * and the store is capped: this is a cache of what someone looked at, not a
+   * download of a region, which is a thing tile providers ask people not to do.
+   */
+  // Cross-origin only. A same-origin path that happened to look like a tile
+  // would otherwise be routed away from the shell rules it belongs to.
+  if (url.origin !== self.location.origin && isTile(url)) {
+    event.respondWith(tileResponse(request));
+    return;
+  }
+
   if (url.origin !== self.location.origin) return;
   if (mustBeFresh(url)) return;
 

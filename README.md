@@ -136,6 +136,35 @@ is known to differ by — a shift of a few metres would mean it had not been
 applied, one of several kilometres would mean the wrong ellipsoid or a sign
 error, and both are invisible on a map.
 
+#### The map itself
+
+A slippy map, hand-rolled, in about two hundred lines. Leaflet or MapLibre
+would each add a few hundred kilobytes and a second interaction model to an app
+that is already a canvas with its own gestures, and what is needed here is: put
+these tiles in a grid, put this parcel on top, let a thumb move it. Pan, pinch,
+wheel and buttons; the tile arithmetic lives in
+`packages/engine/src/geodesy/web-mercator.ts` where it is tested.
+
+Web Mercator is display arithmetic and is kept away from everything else. It
+treats the earth as a sphere, which is right for deciding which pixel something
+lands on and wrong by up to twenty kilometres for anything measured — so it is
+fed degrees from the converted copy and no survey value passes through it.
+
+Tiles come from **OpenStreetMap** by default, whose licence obliges the
+attribution shown under the map. Most surveyors want satellite imagery behind a
+parcel instead; point `VITE_MAP_TILES` and `VITE_MAP_ATTRIBUTION` at a provider
+you hold a licence for. Those are build-time settings rather than a second
+hardcoded provider because agreeing to somebody's terms is the operator's
+decision, not this repository's.
+
+Tiles that have actually been looked at are kept in their own capped cache, so
+a surveyor who viewed the site with signal sees it again without. That is a
+cache of what someone looked at, not a download of a region — the thing tile
+providers ask people not to do. When tiles cannot be fetched at all the map
+does not break: the failed ones are hidden rather than left as broken-image
+borders, the parcel is still drawn from the converted coordinates, and the map
+says why the background is empty.
+
 ### Working in the app
 
 - **The site name in the title bar** opens Project: what the site is called,
@@ -507,7 +536,7 @@ VITE_AUTH_ENDPOINT=http://127.0.0.1:8788/api/auth npm run dev --workspace @surve
 ## Testing
 
 ```bash
-npm test                                    # 302 tests across contracts, engine, web and auth
+npm test                                    # 313 tests across contracts, engine, web and auth
 npm run smoke --workspace @surveyor/web     # browser flows (needs a preview server)
 ```
 
@@ -602,6 +631,8 @@ environment variables and no server. The rest are optional:
 | `AUTH_STORE` | Runtime | `kv`, or `file` for a single-host self-install. Unset, an attached Redis is used and the endpoint replies 503 if there is none. |
 | `AUTH_STORE_PATH` | Runtime | Where the file store writes, when `AUTH_STORE=file`. Single-host only. |
 | `AUTH_ORIGINS` | Runtime | Comma-separated origins allowed to sign in. Unset, same-origin only, which is what a normal deployment wants. |
+| `VITE_MAP_TILES` | Build | Tile URL template, e.g. `https://.../{z}/{x}/{y}.jpg`. Unset, OpenStreetMap. Point it at a satellite provider you hold a licence for. |
+| `VITE_MAP_ATTRIBUTION` | Build | The credit shown under the map. Set it whenever `VITE_MAP_TILES` is set — it is a licence condition, not decoration. |
 
 `api/assistant.js` is the local reference server
 (`apps/web/server/assistant.mjs`) as a serverless function; `api/extract.js`

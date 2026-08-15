@@ -35,8 +35,14 @@ import {
   gridToGeographic,
   ringFromPointOrder,
   shiftDatum,
+  MAX_LATITUDE,
+  fromWorldPixel,
+  tileUrl,
+  tilesFor,
   toGeoJson,
   toWgs84,
+  toWorldPixel,
+  zoomForBounds,
   transformationFor,
   wgs84Copy,
 } from '../src/index.js';
@@ -564,4 +570,141 @@ test('a survey already on WGS 84 passes through without being shifted', () => {
     // On the central meridian of zone 33N.
     assert.ok(Math.abs(result.plan.points[0]!.longitude - 15) < 1e-9);
   }
+});
+
+// ---------------------------------------------------------------------------
+// The tile grid
+// ---------------------------------------------------------------------------
+
+test('Web Mercator puts the origin in the middle of the world', () => {
+  // At zoom 0 the whole world is one 256-pixel tile, so null island is at its
+  // centre and the antimeridian at its edges.
+  const middle = toWorldPixel(0, 0, 0);
+  assert.ok(Math.abs(middle.x - 128) < 1e-9, `x ${middle.x}`);
+  assert.ok(Math.abs(middle.y - 128) < 1e-9, `y ${middle.y}`);
+
+  assert.ok(Math.abs(toWorldPixel(0, 180, 0).x - 256) < 1e-9);
+  assert.ok(Math.abs(toWorldPixel(0, -180, 0).x) < 1e-9);
+});
+
+test('the projection is cut off at the latitude that makes the world square', () => {
+  // Mercator sends the poles to infinity; the tile scheme stops at
+  // atan(sinh(π)), which is what makes a zoom level a square of tiles.
+  assert.ok(Math.abs(MAX_LATITUDE - (Math.atan(Math.sinh(Math.PI)) * 180) / Math.PI) < 1e-9);
+  assert.ok(Math.abs(toWorldPixel(MAX_LATITUDE, 0, 0).y) < 1e-6);
+  assert.ok(Math.abs(toWorldPixel(-MAX_LATITUDE, 0, 0).y - 256) < 1e-6);
+
+  // Beyond it, clamped rather than turned into an infinity that would poison
+  // every subsequent calculation silently.
+  assert.ok(Number.isFinite(toWorldPixel(90, 0, 0).y));
+  assert.ok(Number.isFinite(toWorldPixel(-90, 0, 0).y));
+});
+
+test('a position survives the round trip through pixel space', () => {
+  for (const zoom of [1, 8, 17, 21]) {
+    for (const place of [
+      { latitude: 6.5042, longitude: 3.4052 },
+      { latitude: 13.9, longitude: 13.2 },
+      { latitude: -33.87, longitude: 151.21 },
+    ]) {
+      const back = fromWorldPixel(toWorldPixel(place.latitude, place.longitude, zoom), zoom);
+      assert.ok(Math.abs(back.latitude - place.latitude) < 1e-9, `zoom ${zoom} latitude`);
+      assert.ok(Math.abs(back.longitude - place.longitude) < 1e-9, `zoom ${zoom} longitude`);
+    }
+  }
+});
+
+test('every zoom level doubles the world', () => {
+  const here = { latitude: 6.5, longitude: 3.4 };
+  for (const zoom of [0, 5, 12]) {
+    const a = toWorldPixel(here.latitude, here.longitude, zoom);
+    const b = toWorldPixel(here.latitude, here.longitude, zoom + 1);
+    assert.ok(Math.abs(b.x - a.x * 2) < 1e-6);
+    assert.ok(Math.abs(b.y - a.y * 2) < 1e-6);
+  }
+});
+
+test('a survey-sized parcel is fitted at a zoom that can actually see it', () => {
+  const result = wgs84Copy(survey());
+  assert.ok(result.ok);
+  if (!result.ok) return;
+
+  const zoom = zoomForBounds(result.plan.bounds, 360, 340);
+  // A 30 m parcel. Zoomed out to street level it is a dot; past 21 no provider
+  // has tiles. Both ends are mistakes worth catching.
+  assert.ok(zoom > 15 && zoom <= 21, `fitted at zoom ${zoom}`);
+});
+
+test('a single point has no extent, and is not fitted to infinity', () => {
+  const zoom = zoomForBounds([3.4, 6.5, 3.4, 6.5], 360, 340);
+  assert.ok(Number.isFinite(zoom));
+  assert.ok(zoom > 10 && zoom <= 22, `a point fitted at zoom ${zoom}`);
+});
+
+test('the tiles cover the viewport, and no more than they need to', () => {
+  const centre = { latitude: 6.5042, longitude: 3.4052 };
+  const tiles = tilesFor(centre, 17, 360, 340);
+
+  assert.ok(tiles.length > 0, 'no tiles for a viewport');
+  // 360×340 at 256 px a tile needs at most 3×3.
+  assert.ok(tiles.length <= 12, `${tiles.length} tiles for one small viewport`);
+
+  // Together they cover it: nothing in the viewport is left uncovered.
+  const covered = (x: number, y: number) =>
+    tiles.some(
+      (tile) =>
+        x >= tile.left && x < tile.left + tile.size && y >= tile.top && y < tile.top + tile.size,
+    );
+  for (const [x, y] of [[0, 0], [359, 0], [0, 339], [359, 339], [180, 170]]) {
+    assert.ok(covered(x!, y!), `the viewport is not covered at ${x},${y}`);
+  }
+});
+
+test('tile indices stay inside the grid for the zoom', () => {
+  for (const zoom of [0, 1, 6, 18]) {
+    for (const tile of tilesFor({ latitude: 6.5, longitude: 3.4 }, zoom, 400, 400)) {
+      const count = 2 ** zoom;
+      assert.ok(tile.x >= 0 && tile.x < count, `x ${tile.x} at zoom ${zoom}`);
+      assert.ok(tile.y >= 0 && tile.y < count, `y ${tile.y} at zoom ${zoom}`);
+    }
+  }
+});
+
+test('there are no tiles above the north edge of the world or below the south', () => {
+  // The world wraps sideways but not vertically, and asking for a row that
+  // does not exist is a 404 per tile on somebody else's server.
+  const top = tilesFor({ latitude: 84.9, longitude: 0 }, 2, 600, 600);
+  assert.ok(top.every((tile) => tile.y >= 0 && tile.y < 4));
+  const bottom = tilesFor({ latitude: -84.9, longitude: 0 }, 2, 600, 600);
+  assert.ok(bottom.every((tile) => tile.y >= 0 && tile.y < 4));
+});
+
+test('a tile URL is filled in, with nothing left unsubstituted', () => {
+  const url = tileUrl('https://tile.example/{z}/{x}/{y}.png', { x: 12, y: 34, z: 5 });
+  assert.equal(url, 'https://tile.example/5/12/34.png');
+  assert.ok(!/\{/.test(url), 'a placeholder survived');
+
+  // Subdomain sharding, for providers that ask for it.
+  const sharded = tileUrl('https://{s}.tile.example/{z}/{x}/{y}.png', { x: 1, y: 1, z: 3 });
+  assert.match(sharded, /^https:\/\/[abc]\.tile\.example\/3\/1\/1\.png$/);
+});
+
+test('the map projection never touches survey coordinates', () => {
+  /*
+   * Web Mercator treats the earth as a sphere, which is fine for deciding
+   * which pixel something lands on and wrong by up to twenty kilometres for
+   * anything else. This is the guard that it stays on the display side: it is
+   * fed degrees from the converted copy, and there is no path from a survey
+   * easting into it.
+   */
+  const model = survey();
+  const before = structuredClone(model);
+  const result = wgs84Copy(model);
+  assert.ok(result.ok);
+  if (result.ok) {
+    for (const point of result.plan.points) {
+      toWorldPixel(point.latitude, point.longitude, 17);
+    }
+  }
+  assert.deepEqual(model, before);
 });

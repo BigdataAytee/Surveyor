@@ -12,6 +12,7 @@ export * from './geodesy/transverse-mercator.js';
 export * from './geodesy/datum.js';
 export * from './geodesy/registry.js';
 export * from './geodesy/wgs84.js';
+export * from './geodesy/web-mercator.js';
 export * from './cogo.js';
 export * from './validation.js';
 export * from './drawing.js';

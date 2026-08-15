@@ -140,6 +140,22 @@ export async function clearAllData(): Promise<void> {
   // waiting for a database.
   const { idbClear } = await import('./idb.js');
   await idbClear();
+
+  /*
+   * And the map tiles.
+   *
+   * Imagery of a client's site is as identifying as the survey of it, and on a
+   * shared tablet leaving it behind would break the promise this action makes.
+   * The app shell's own cache is deliberately left: it is this app's code, it
+   * identifies nobody, and removing it would mean the device could no longer
+   * open the app offline.
+   */
+  try {
+    await caches?.delete('surveyor-tiles');
+  } catch {
+    // No Cache API, or a browser refusing it in private mode. The rest of the
+    // erase has already happened and is what matters.
+  }
 }
 
 /**

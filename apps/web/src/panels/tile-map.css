@@ -1,0 +1,126 @@
+/*
+ * The tile map.
+ *
+ * The parcel has to read against whatever the imagery happens to be — grey
+ * streets, dark satellite, bright desert — so its lines carry a light halo
+ * rather than relying on a colour that will sometimes disappear.
+ */
+
+.tilemap {
+  position: relative;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  overflow: hidden;
+  background: var(--surface-sunken);
+}
+
+.tilemap__viewport {
+  position: relative;
+  width: 100%;
+  height: 340px;
+  overflow: hidden;
+  cursor: grab;
+  /*
+   * The map handles its own gestures, so the browser must not also scroll the
+   * sheet or zoom the page while a finger is dragging across it.
+   */
+  touch-action: none;
+  user-select: none;
+}
+
+.tilemap__viewport:active {
+  cursor: grabbing;
+}
+
+.tilemap__tile {
+  position: absolute;
+  pointer-events: none;
+  /* Tiles butt against each other; a hairline of background between them is
+     the classic slippy-map seam. */
+  outline: 0.5px solid transparent;
+}
+
+.tilemap__overlay {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  pointer-events: none;
+  overflow: visible;
+}
+
+.tilemap__ring {
+  fill: color-mix(in srgb, var(--accent) 22%, transparent);
+  stroke: var(--accent);
+  stroke-width: 2.5;
+  stroke-linejoin: round;
+  paint-order: stroke;
+}
+
+.tilemap__feature {
+  fill: none;
+  stroke: #ffffff;
+  stroke-width: 3;
+  stroke-linejoin: round;
+  stroke-opacity: 0.7;
+}
+
+.tilemap__point {
+  fill: var(--accent);
+  stroke: #ffffff;
+  stroke-width: 1.5;
+}
+
+.tilemap__controls {
+  position: absolute;
+  top: var(--space-2);
+  right: var(--space-2);
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  border-radius: var(--radius-sm);
+  overflow: hidden;
+  box-shadow: var(--shadow-md);
+}
+
+.tilemap__controls button {
+  width: var(--touch-min, 44px);
+  height: var(--touch-min, 44px);
+  border: none;
+  background: var(--surface-raised);
+  color: var(--ink-primary);
+  font-size: 18px;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.tilemap__controls button:hover {
+  background: var(--surface-hover, var(--surface-sunken));
+}
+
+.tilemap__note {
+  position: absolute;
+  left: var(--space-2);
+  right: calc(var(--touch-min, 44px) + var(--space-4));
+  bottom: var(--space-2);
+  margin: 0;
+  padding: var(--space-2);
+  border-radius: var(--radius-sm);
+  background: color-mix(in srgb, var(--surface-raised) 92%, transparent);
+  font-size: var(--text-micro);
+  color: var(--ink-secondary);
+}
+
+.tilemap__attribution {
+  margin: 0;
+  padding: 2px var(--space-2);
+  font-size: var(--text-micro);
+  color: var(--ink-tertiary);
+  text-align: right;
+  background: var(--surface-raised);
+  border-top: 1px solid var(--border);
+}
+
+.tilemap__zoom {
+  font-variant-numeric: tabular-nums;
+}
