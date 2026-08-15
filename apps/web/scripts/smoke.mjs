@@ -450,17 +450,55 @@ for (const [name, viewport] of [
     }
   });
 
-  const gridBefore = await page.evaluate(() =>
-    Object.keys(window.localStorage)
-      .filter((key) => key.startsWith('surveyor.project.'))
-      .map((key) => window.localStorage.getItem(key))
-      .join(''),
-  );
+  /*
+   * The stored *survey*, not the stored bytes.
+   *
+   * Comparing the whole serialised project was wrong twice over. The library
+   * stamps `updatedAt` and records the computed area on the ordinary autosave,
+   * neither of which has anything to do with the map; and local storage does
+   * not enumerate its keys in a stable order once they have been rewritten, so
+   * the join itself moved. What must not change is the survey — the
+   * coordinates, the boundary, the features and the system they are on — so
+   * that is what this reads, from keys in a fixed order.
+   */
+  const readSurvey = () =>
+    page.evaluate(() =>
+      Object.keys(window.localStorage)
+        .filter((key) => key.startsWith('surveyor.project.'))
+        // Sorted. `Object.keys` on local storage is not order-stable across
+        // rewrites, and an unsorted join reported the same survey as changed
+        // roughly one run in six — a flake that reads exactly like the defect
+        // this check exists to catch.
+        .sort()
+        .map((key) => {
+          try {
+            const stored = JSON.parse(window.localStorage.getItem(key) ?? '{}');
+            return JSON.stringify({
+              crs: stored.model?.crs,
+              points: stored.model?.points,
+              boundary: stored.model?.boundary,
+              features: stored.model?.siteFeatures,
+            });
+          } catch {
+            return 'unreadable';
+          }
+        })
+        .join(''),
+    );
+
+  const gridBefore = await readSurvey();
   expect(/544800/.test(gridBefore), 'map: the sample is not stored in Minna grid coordinates');
 
-  await page.getByRole('button', { name: 'Open menu' }).click();
-  await page.waitForTimeout(400);
-  await page.getByRole('button', { name: 'Map', exact: true }).click();
+  /*
+   * Opened from the drawing itself, not through the menu. That button is the
+   * point of this check: the map was three taps away behind a drawer, which
+   * for something a surveyor reaches for repeatedly is three too many.
+   */
+  const mapButton = page.getByRole('button', {
+    name: 'Show on a map, and switch between streets and satellite',
+  });
+  expect(await mapButton.isVisible(), 'map: no map button on the drawing interface');
+  await mapButton.click();
   await page.waitForTimeout(1200);
 
   const shown = (await page.textContent('body')) ?? '';
@@ -520,9 +558,18 @@ for (const [name, viewport] of [
     tileRequests.some((url) => url.includes('tile.openstreetmap.org')),
     'layers: OpenStreetMap was not the layer that loaded',
   );
+  const toggle = page.locator('.tilemap__layer-toggle');
   expect(
-    await page.getByRole('button', { name: 'Streets' }).getAttribute('aria-pressed') === 'true',
-    'layers: Streets is not the layer shown as active',
+    /Map imagery: Streets/.test((await toggle.getAttribute('aria-label')) ?? ''),
+    'layers: the map does not say which layer it is showing',
+  );
+  expect(
+    /Streets/.test((await toggle.innerText()) ?? ''),
+    'layers: the switch does not name the layer on screen',
+  );
+  expect(
+    /Switch to Satellite/.test((await toggle.getAttribute('aria-label')) ?? ''),
+    'layers: the switch does not say what it switches to',
   );
 
   /*
@@ -541,7 +588,7 @@ for (const [name, viewport] of [
   expect(before.points.length >= 4, 'layers: the beacons were not drawn before switching');
 
   const osmCount = tileRequests.length;
-  await page.getByRole('button', { name: 'Satellite' }).click();
+  await toggle.click();
   await page.waitForTimeout(1200);
 
   // 2. Satellite imagery loads, from the imagery host and nowhere else.
@@ -586,8 +633,17 @@ for (const [name, viewport] of [
     'layers: OpenStreetMap is credited for imagery it did not provide',
   );
 
+  expect(
+    /Map imagery: Satellite/.test((await toggle.getAttribute('aria-label')) ?? ''),
+    'layers: the switch does not say it is now on satellite',
+  );
+  expect(
+    /Satellite/.test((await toggle.innerText()) ?? ''),
+    'layers: the switch still names the old layer after switching',
+  );
+
   // And back, to be sure the first layer is still there rather than replaced.
-  await page.getByRole('button', { name: 'Streets' }).click();
+  await toggle.click();
   await page.waitForTimeout(1000);
   expect(
     /OpenStreetMap/.test((await page.locator('.tilemap__attribution').innerText()) ?? ''),
@@ -611,16 +667,14 @@ for (const [name, viewport] of [
   await page.keyboard.press('Escape');
   await page.waitForTimeout(600);
 
-  const gridAfter = await page.evaluate(() =>
-    Object.keys(window.localStorage)
-      .filter((key) => key.startsWith('surveyor.project.'))
-      .map((key) => window.localStorage.getItem(key))
-      .join(''),
-  );
+  const gridAfter = await readSurvey();
   // 4. Nothing the map did — converting, panning, zooming or switching layer —
   // touched the survey.
   expect(/544800/.test(gridAfter), 'map: the stored survey no longer holds its Minna coordinates');
-  expect(gridAfter === gridBefore, 'map: the stored survey changed while it was being mapped');
+  expect(
+    gridAfter === gridBefore,
+    'map: the stored survey coordinates changed while it was being mapped',
+  );
   expect(
     !/"easting":3\.40|"easting":6\.50/.test(gridAfter),
     'map: degrees were written back into the survey',

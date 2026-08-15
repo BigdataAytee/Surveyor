@@ -47,6 +47,13 @@ export function TileMap({ plan }: { readonly plan: Wgs84Plan }) {
     () => layerById(loadPreferences().mapLayer ?? DEFAULT_LAYER_ID).id,
   );
   const layer = layerById(layerId);
+  /**
+   * The one it would switch to.
+   *
+   * Written for any number of layers rather than hard-coded to two, so adding
+   * a third is a line in the registry and not a redesign of this control.
+   */
+  const next = MAP_LAYERS[(MAP_LAYERS.findIndex((l) => l.id === layer.id) + 1) % MAP_LAYERS.length]!;
 
   const host = useRef<HTMLDivElement>(null);
   const [size, setSize] = useState({ width: 0, height: 0 });
@@ -304,37 +311,41 @@ export function TileMap({ plan }: { readonly plan: Wgs84Plan }) {
           </p>
         ) : null}
         {/*
-          The layer switcher.
-          
-          Inside the viewport rather than under it, because it is a control for
-          the map and belongs on the map — and on a phone the sheet below it
-          scrolls, which would leave the switcher somewhere else on the screen
-          from the thing it switches.
+          One small button, not a row of them.
+
+          A two-way choice does not need two controls. It names the layer you
+          are *on* rather than the one it would switch to: a button reading
+          "Streets" while satellite imagery fills the screen is a puzzle, and
+          the arrows are what say it can be changed. Big map apps get away with
+          labelling the target because they show a thumbnail of it; without one
+          the state is the honest thing to print.
         */}
-        <div className="tilemap__layers" role="group" aria-label="Map imagery">
-          {MAP_LAYERS.map((option) => (
-            <button
-              key={option.id}
-              type="button"
-              className={`tilemap__layer${option.id === layer.id ? ' is-active' : ''}`}
-              aria-pressed={option.id === layer.id}
-              onClick={() => {
-                /*
-                 * Only the imagery changes. The view — centre and zoom — is
-                 * left exactly as it is, so the parcel stays under the same
-                 * pixels and the surveyor keeps looking at what they were
-                 * looking at. Re-fitting here would be the app deciding it
-                 * knows better than the person who just panned somewhere.
-                 */
-                setLayerId(option.id);
-                setFailed(0);
-                savePreferences({ ...loadPreferences(), mapLayer: option.id });
-              }}
-            >
-              {option.label}
-            </button>
-          ))}
-        </div>
+        <button
+          type="button"
+          className="tilemap__layer-toggle"
+          aria-label={`Map imagery: ${layer.label}. Switch to ${next.label}.`}
+          title={`Switch to ${next.label}`}
+          onClick={() => {
+            /*
+             * Only the imagery changes. The view — centre and zoom — is left
+             * exactly as it is, so the parcel stays under the same pixels and
+             * the surveyor keeps looking at what they were looking at.
+             * Re-fitting here would be the app deciding it knows better than
+             * the person who just panned somewhere.
+             */
+            setLayerId(next.id);
+            setFailed(0);
+            savePreferences({ ...loadPreferences(), mapLayer: next.id });
+          }}
+        >
+          <span className="tilemap__layer-glyph" aria-hidden="true">
+            {layer.id === 'satellite' ? '◉' : '▦'}
+          </span>
+          {layer.label}
+          <span className="tilemap__layer-swap" aria-hidden="true">
+            ⇄
+          </span>
+        </button>
       </div>
 
       <div className="tilemap__controls">

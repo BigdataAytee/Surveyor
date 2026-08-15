@@ -127,36 +127,46 @@
 
 /* --- The layer switcher --------------------------------------------------- */
 
-.tilemap__layers {
+/*
+ * One small button in the corner of the map, showing what it switches to.
+ *
+ * Deliberately compact: this sits on top of imagery a surveyor is trying to
+ * read, and a control that covers the site is a control in the way.
+ */
+.tilemap__layer-toggle {
   position: absolute;
   left: var(--space-2);
   top: var(--space-2);
-  display: flex;
-  border-radius: var(--radius-sm);
-  overflow: hidden;
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+  /* Small, but not smaller than a thumb: it sits over a surface that also
+     responds to a drag, so a near-miss must not become a pan. */
+  min-height: var(--touch-min, 44px);
+  padding: 0 var(--space-3);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-pill, 999px);
+  background: color-mix(in srgb, var(--surface-raised) 94%, transparent);
+  color: var(--ink-primary);
+  font-size: var(--text-caption);
+  font-weight: var(--weight-medium);
+  white-space: nowrap;
+  cursor: pointer;
   box-shadow: var(--shadow-md);
+}
+
+.tilemap__layer-toggle:hover {
   background: var(--surface-raised);
 }
 
-.tilemap__layer {
-  border: none;
-  background: transparent;
-  color: var(--ink-secondary);
-  /* A real target: this sits over a map that also responds to a drag, so a
-     near-miss must not become a pan. */
-  min-height: var(--touch-min, 44px);
-  padding: 0 var(--space-3);
-  font-size: var(--text-caption);
-  font-weight: var(--weight-medium);
-  cursor: pointer;
-  white-space: nowrap;
+.tilemap__layer-glyph {
+  font-size: 1rem;
+  line-height: 1;
 }
 
-.tilemap__layer + .tilemap__layer {
-  border-left: 1px solid var(--border);
-}
-
-.tilemap__layer.is-active {
-  background: var(--accent);
-  color: var(--on-accent, #ffffff);
+/* The arrows are what make a label into a control. */
+.tilemap__layer-swap {
+  color: var(--ink-tertiary);
+  font-size: 0.9rem;
+  line-height: 1;
 }

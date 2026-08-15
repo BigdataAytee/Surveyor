@@ -84,6 +84,14 @@ export interface CanvasProps {
    * a hidden layer that still catches clicks is worse than one that is visible,
    * because the thing being grabbed cannot be seen.
    */
+  /**
+   * Open the map view.
+   *
+   * Passed in rather than opened here: the canvas draws, it does not know what
+   * panels exist. Absent means no button, which is what a build with nowhere
+   * to send it should show.
+   */
+  readonly onOpenMap?: () => void;
   readonly hiddenLayers?: readonly LayerId[];
   /**
    * Layers the user has locked. Drawn, and snapped to — that is most of what
@@ -149,6 +157,7 @@ export function DrawingCanvas({
   tool = 'select',
   onDrawPoint,
   unit = 'm',
+  onOpenMap,
   hiddenLayers = [],
   lockedLayers = [],
   onMoveBy,
@@ -916,6 +925,7 @@ export function DrawingCanvas({
               )
             }
             onFit={fit}
+            onOpenMap={onOpenMap}
           />
           <NorthArrow />
           <ScaleBar viewport={viewport} />
@@ -1123,10 +1133,13 @@ function ZoomControls({
   onZoomIn,
   onZoomOut,
   onFit,
+  onOpenMap,
 }: {
   readonly onZoomIn: () => void;
   readonly onZoomOut: () => void;
   readonly onFit: () => void;
+  /** Absent on a survey that cannot be mapped — see `Workspace`. */
+  readonly onOpenMap?: (() => void) | undefined;
 }) {
   return (
     <div className="canvas__zoom">
@@ -1139,6 +1152,24 @@ function ZoomControls({
       <button type="button" onClick={onFit} aria-label="Fit plan to screen" title="Fit the whole plan on screen">
         ⤢
       </button>
+      {/*
+        The map, one tap from the drawing rather than three through a menu.
+
+        It sits with the view controls because that is what it is — another way
+        of looking at the same plan — and it is the same size as the rest so a
+        thumb reaching for it does not have to aim. Whichever basemap was last
+        chosen is the one it opens on.
+      */}
+      {onOpenMap ? (
+        <button
+          type="button"
+          onClick={onOpenMap}
+          aria-label="Show on a map, and switch between streets and satellite"
+          title="Map — streets or satellite"
+        >
+          ◈
+        </button>
+      ) : null}
     </div>
   );
 }

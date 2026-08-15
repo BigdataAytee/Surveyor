@@ -417,6 +417,7 @@ export function Workspace() {
               showGrid={showGrid}
               tool={tool}
               unit={UNIT_ABBREVIATION[state.model.crs.units]}
+              onOpenMap={() => setPanel('map')}
               onDrawPoint={(at) => dispatch({ type: 'add-boundary-point', at })}
               onSelect={(id) => dispatch({ type: 'select', id })}
               hiddenLayers={LAYER_NAMES.filter((l) => !layers[l.id].visible).map((l) => l.id)}
