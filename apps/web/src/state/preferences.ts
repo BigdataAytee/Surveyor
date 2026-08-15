@@ -39,6 +39,13 @@ export interface Preferences {
   readonly snapping: boolean;
   readonly showGrid: boolean;
   readonly showLabels: boolean;
+  /**
+   * Which basemap the map opens on.
+   *
+   * A fact about how someone works — imagery or streets — not about any
+   * survey, which is why it lives here and not in the model.
+   */
+  readonly mapLayer?: string;
 }
 
 export const DEFAULT_PREFERENCES: Preferences = {

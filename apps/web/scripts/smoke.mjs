@@ -427,6 +427,9 @@ for (const [name, viewport] of [
    * back would be invisible in the engine tests and obvious here, because the
    * plan's own coordinates would move.
    */
+  /** Every tile URL either layer asked for, so the switch can be checked. */
+  const tileRequests = [];
+
   const page = await open('map', PHONE, async (target) => {
     /*
      * A one-pixel PNG for every tile. This suite must not depend on a tile
@@ -435,16 +438,16 @@ for (const [name, viewport] of [
      */
     // On the context, not the page: the service worker fetches these, and a
     // page-level route does not see a request the worker made.
-    await target.context().route('**/tile.openstreetmap.org/**', (route) =>
-      route.fulfill({
-        status: 200,
-        contentType: 'image/png',
-        body: Buffer.from(
-          'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==',
-          'base64',
-        ),
-      }),
+    const PIXEL = Buffer.from(
+      'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==',
+      'base64',
     );
+    for (const host of ['**/tile.openstreetmap.org/**', '**/server.arcgisonline.com/**']) {
+      await target.context().route(host, (route) => {
+        tileRequests.push(route.request().url());
+        return route.fulfill({ status: 200, contentType: 'image/png', body: PIXEL });
+      });
+    }
   });
 
   const gridBefore = await page.evaluate(() =>
@@ -510,6 +513,91 @@ for (const [name, viewport] of [
   expect(/6\.5\d{5}/.test(table), `map: no latitudes in the converted table — "${table.slice(0, 80)}"`);
   expect(!/544800/.test(table), 'map: a Minna easting reached the map table');
 
+  // --- The layer switcher ---------------------------------------------------
+
+  // 1. OpenStreetMap is still the default, and it is what loaded.
+  expect(
+    tileRequests.some((url) => url.includes('tile.openstreetmap.org')),
+    'layers: OpenStreetMap was not the layer that loaded',
+  );
+  expect(
+    await page.getByRole('button', { name: 'Streets' }).getAttribute('aria-pressed') === 'true',
+    'layers: Streets is not the layer shown as active',
+  );
+
+  /*
+   * 3. The parcel must not move. Captured as the exact SVG geometry before the
+   * switch and compared with it afterwards — a shift of even one pixel would
+   * mean the two layers disagree about where the world is, which is the whole
+   * risk in offering a second one.
+   */
+  const before = {
+    ring: await page.locator('.tilemap__ring').first().getAttribute('points'),
+    points: await page.locator('.tilemap__point').evaluateAll((nodes) =>
+      nodes.map((node) => `${node.getAttribute('cx')},${node.getAttribute('cy')}`),
+    ),
+    attribution: await page.locator('.tilemap__attribution').innerText(),
+  };
+  expect(before.points.length >= 4, 'layers: the beacons were not drawn before switching');
+
+  const osmCount = tileRequests.length;
+  await page.getByRole('button', { name: 'Satellite' }).click();
+  await page.waitForTimeout(1200);
+
+  // 2. Satellite imagery loads, from the imagery host and nowhere else.
+  const satellite = tileRequests.slice(osmCount);
+  expect(satellite.length > 0, 'layers: switching to satellite requested no imagery');
+  expect(
+    satellite.every((url) => url.includes('arcgisonline.com')),
+    'layers: the satellite layer fetched something other than imagery',
+  );
+  // Esri puts the row before the column; a swapped pair fetches a real tile of
+  // somewhere else, which is invisible unless the path is checked.
+  for (const url of satellite) {
+    expect(
+      /\/MapServer\/tile\/\d+\/\d+\/\d+$/.test(url),
+      `layers: an imagery URL is not in {z}/{y}/{x} form — "${url}"`,
+    );
+  }
+  expect(
+    (await page.locator('.tilemap__tile').count()) > 0,
+    'layers: no tiles are drawn on the satellite layer',
+  );
+  await shot(page, 'map-satellite');
+
+  const after = {
+    ring: await page.locator('.tilemap__ring').first().getAttribute('points'),
+    points: await page.locator('.tilemap__point').evaluateAll((nodes) =>
+      nodes.map((node) => `${node.getAttribute('cx')},${node.getAttribute('cy')}`),
+    ),
+    attribution: await page.locator('.tilemap__attribution').innerText(),
+  };
+
+  expect(after.ring === before.ring, 'layers: the boundary moved when the layer changed');
+  expect(
+    JSON.stringify(after.points) === JSON.stringify(before.points),
+    'layers: the survey points moved when the layer changed',
+  );
+  // The credit has to follow the imagery, or the wrong people are being
+  // credited for it.
+  expect(/Esri/.test(after.attribution), 'layers: the imagery source is not credited');
+  expect(
+    !/OpenStreetMap/.test(after.attribution),
+    'layers: OpenStreetMap is credited for imagery it did not provide',
+  );
+
+  // And back, to be sure the first layer is still there rather than replaced.
+  await page.getByRole('button', { name: 'Streets' }).click();
+  await page.waitForTimeout(1000);
+  expect(
+    /OpenStreetMap/.test((await page.locator('.tilemap__attribution').innerText()) ?? ''),
+    'layers: OpenStreetMap could not be returned to',
+  );
+  expect(
+    (await page.locator('.tilemap__ring').first().getAttribute('points')) === before.ring,
+    'layers: switching back did not restore the boundary to where it was',
+  );
+
   await page.keyboard.press('Escape');
   await page.waitForTimeout(800);
 
@@ -529,7 +617,10 @@ for (const [name, viewport] of [
       .map((key) => window.localStorage.getItem(key))
       .join(''),
   );
+  // 4. Nothing the map did — converting, panning, zooming or switching layer —
+  // touched the survey.
   expect(/544800/.test(gridAfter), 'map: the stored survey no longer holds its Minna coordinates');
+  expect(gridAfter === gridBefore, 'map: the stored survey changed while it was being mapped');
   expect(
     !/"easting":3\.40|"easting":6\.50/.test(gridAfter),
     'map: degrees were written back into the survey',

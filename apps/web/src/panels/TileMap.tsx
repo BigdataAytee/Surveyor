@@ -30,27 +30,24 @@ import {
   type Wgs84Plan,
 } from '@surveyor/engine';
 
+import { DEFAULT_LAYER_ID, MAP_LAYERS, layerById, type MapLayer } from './map-layers.js';
+import { loadPreferences, savePreferences } from '../state/preferences.js';
 import './tile-map.css';
 
-/**
- * Where the imagery comes from.
- *
- * OpenStreetMap by default, because its terms are clear and its attribution
- * requirement is met below. A deployment wanting satellite imagery — which is
- * what most surveyors actually want behind a parcel — should point these at a
- * provider it holds a licence for. They are build-time settings rather than a
- * hardcoded second provider, because agreeing to somebody's terms is the
- * operator's decision to make and not this file's.
- */
-const TILE_TEMPLATE: string =
-  (import.meta.env.VITE_MAP_TILES as string | undefined)?.trim() ||
-  'https://tile.openstreetmap.org/{z}/{x}/{y}.png';
-
-const ATTRIBUTION: string =
-  (import.meta.env.VITE_MAP_ATTRIBUTION as string | undefined)?.trim() ||
-  '© OpenStreetMap contributors';
-
 export function TileMap({ plan }: { readonly plan: Wgs84Plan }) {
+  /*
+   * Which basemap, remembered.
+   *
+   * A surveyor who works from imagery works from imagery on every job, and
+   * having to say so again on every plan is the app not paying attention. It
+   * is a preference about them, not about the survey, so it goes where the
+   * other ones do and never near the model.
+   */
+  const [layerId, setLayerId] = useState<MapLayer['id']>(
+    () => layerById(loadPreferences().mapLayer ?? DEFAULT_LAYER_ID).id,
+  );
+  const layer = layerById(layerId);
+
   const host = useRef<HTMLDivElement>(null);
   const [size, setSize] = useState({ width: 0, height: 0 });
   const [view, setView] = useState<{
@@ -60,6 +57,16 @@ export function TileMap({ plan }: { readonly plan: Wgs84Plan }) {
   } | null>(null);
   /** Tiles that failed to load, so the map can say the imagery is missing. */
   const [failed, setFailed] = useState(0);
+
+  /*
+   * A layer whose tiles are 512 pixels, or whose origin is at the bottom of
+   * the world, would draw a convincing map with the boundary in the wrong
+   * field. Checked rather than assumed, because that is the one way switching
+   * layers could move the parcel and it would not look like an error.
+   */
+  if (layer.tileSize !== 256) {
+    throw new Error(`Map layer “${layer.label}” is not on the 256-pixel tile grid.`);
+  }
 
   useEffect(() => {
     const element = host.current;
@@ -89,8 +96,13 @@ export function TileMap({ plan }: { readonly plan: Wgs84Plan }) {
   }, [fit, size.width, view]);
 
   const tiles = useMemo(
-    () => (view === null || size.width === 0 ? [] : tilesFor(view, view.zoom, size.width, size.height)),
-    [view, size.width, size.height],
+    () =>
+      view === null || size.width === 0
+        ? []
+        : // The layer's own depth limit. Past it the last real level is
+          // stretched rather than requesting tiles the provider does not have.
+          tilesFor(view, view.zoom, size.width, size.height, layer.maxZoom),
+    [view, size.width, size.height, layer.maxZoom],
   );
 
   /** A position to a pixel in this viewport. */
@@ -213,9 +225,9 @@ export function TileMap({ plan }: { readonly plan: Wgs84Plan }) {
       >
         {tiles.map((tile) => (
           <img
-            key={`${tile.z}/${tile.x}/${tile.y}`}
+            key={`${layer.id}/${tile.z}/${tile.x}/${tile.y}`}
             className="tilemap__tile"
-            src={tileUrl(TILE_TEMPLATE, tile)}
+            src={tileUrl(layer.template, tile)}
             alt=""
             aria-hidden="true"
             draggable={false}
@@ -291,6 +303,38 @@ export function TileMap({ plan }: { readonly plan: Wgs84Plan }) {
             converted coordinates and does not.
           </p>
         ) : null}
+        {/*
+          The layer switcher.
+          
+          Inside the viewport rather than under it, because it is a control for
+          the map and belongs on the map — and on a phone the sheet below it
+          scrolls, which would leave the switcher somewhere else on the screen
+          from the thing it switches.
+        */}
+        <div className="tilemap__layers" role="group" aria-label="Map imagery">
+          {MAP_LAYERS.map((option) => (
+            <button
+              key={option.id}
+              type="button"
+              className={`tilemap__layer${option.id === layer.id ? ' is-active' : ''}`}
+              aria-pressed={option.id === layer.id}
+              onClick={() => {
+                /*
+                 * Only the imagery changes. The view — centre and zoom — is
+                 * left exactly as it is, so the parcel stays under the same
+                 * pixels and the surveyor keeps looking at what they were
+                 * looking at. Re-fitting here would be the app deciding it
+                 * knows better than the person who just panned somewhere.
+                 */
+                setLayerId(option.id);
+                setFailed(0);
+                savePreferences({ ...loadPreferences(), mapLayer: option.id });
+              }}
+            >
+              {option.label}
+            </button>
+          ))}
+        </div>
       </div>
 
       <div className="tilemap__controls">
@@ -316,7 +360,7 @@ export function TileMap({ plan }: { readonly plan: Wgs84Plan }) {
         is using somebody's work against their terms.
       */}
       <p className="tilemap__attribution">
-        {ATTRIBUTION}
+        {layer.attribution}
         {view ? <span className="tilemap__zoom"> · zoom {Math.round(view.zoom)}</span> : null}
       </p>
     </div>

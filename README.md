@@ -150,12 +150,31 @@ treats the earth as a sphere, which is right for deciding which pixel something
 lands on and wrong by up to twenty kilometres for anything measured — so it is
 fed degrees from the converted copy and no survey value passes through it.
 
-Tiles come from **OpenStreetMap** by default, whose licence obliges the
-attribution shown under the map. Most surveyors want satellite imagery behind a
-parcel instead; point `VITE_MAP_TILES` and `VITE_MAP_ATTRIBUTION` at a provider
-you hold a licence for. Those are build-time settings rather than a second
-hardcoded provider because agreeing to somebody's terms is the operator's
-decision, not this repository's.
+Two basemaps, switched from a control on the map itself:
+
+| Layer | Source | Why |
+|---|---|---|
+| **Streets** (default) | OpenStreetMap | Which road the plot is off, and what the neighbours are called |
+| **Satellite** | Esri World Imagery | What is actually standing on it |
+
+Neither replaces the other, and both credit their source under the map —
+attribution is a licence condition for each, not decoration. A deployment with
+its own licensed imagery can replace either through `VITE_MAP_TILES` /
+`VITE_MAP_SATELLITE_TILES` and their attribution variables; anyone deploying
+this should satisfy themselves that their use sits within the provider's terms.
+
+**Switching layer cannot move the parcel**, and that is structural rather than
+careful. The overlay is positioned from the view — centre and zoom — and takes
+no layer argument, so there is no seam for one to reach through. What *could*
+break it is a provider on a different tile scheme: 512-pixel tiles, or a TMS
+origin at the bottom of the world. Every layer therefore states its scheme and
+the map asserts it, because a layer that got this wrong would draw a thoroughly
+convincing map with the boundary in the wrong field.
+
+Each layer also states how deep its imagery goes. Past that the last real level
+is stretched rather than requesting tiles the provider does not have — which
+would be a wall of 404s on somebody else's server, and a blank screen at exactly
+the zoom a surveyor most wants.
 
 Tiles that have actually been looked at are kept in their own capped cache, so
 a surveyor who viewed the site with signal sees it again without. That is a
@@ -536,7 +555,7 @@ VITE_AUTH_ENDPOINT=http://127.0.0.1:8788/api/auth npm run dev --workspace @surve
 ## Testing
 
 ```bash
-npm test                                    # 313 tests across contracts, engine, web and auth
+npm test                                    # 321 tests across contracts, engine, web and auth
 npm run smoke --workspace @surveyor/web     # browser flows (needs a preview server)
 ```
 
@@ -631,8 +650,10 @@ environment variables and no server. The rest are optional:
 | `AUTH_STORE` | Runtime | `kv`, or `file` for a single-host self-install. Unset, an attached Redis is used and the endpoint replies 503 if there is none. |
 | `AUTH_STORE_PATH` | Runtime | Where the file store writes, when `AUTH_STORE=file`. Single-host only. |
 | `AUTH_ORIGINS` | Runtime | Comma-separated origins allowed to sign in. Unset, same-origin only, which is what a normal deployment wants. |
-| `VITE_MAP_TILES` | Build | Tile URL template, e.g. `https://.../{z}/{x}/{y}.jpg`. Unset, OpenStreetMap. Point it at a satellite provider you hold a licence for. |
-| `VITE_MAP_ATTRIBUTION` | Build | The credit shown under the map. Set it whenever `VITE_MAP_TILES` is set — it is a licence condition, not decoration. |
+| `VITE_MAP_TILES` | Build | Replaces the **Streets** layer's tile URL, e.g. `https://.../{z}/{x}/{y}.png`. Unset, OpenStreetMap. |
+| `VITE_MAP_ATTRIBUTION` | Build | The credit for it. Set it whenever `VITE_MAP_TILES` is — a licence condition, not decoration. |
+| `VITE_MAP_SATELLITE_TILES` | Build | The same for the **Satellite** layer. Unset, Esri World Imagery. |
+| `VITE_MAP_SATELLITE_ATTRIBUTION` | Build | The credit for that one. |
 
 `api/assistant.js` is the local reference server
 (`apps/web/server/assistant.mjs`) as a serverless function; `api/extract.js`

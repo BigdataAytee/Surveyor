@@ -123,8 +123,17 @@ export function tilesFor(
   zoom: number,
   width: number,
   height: number,
+  /**
+   * The deepest zoom the provider actually has tiles for.
+   *
+   * Past it the last real level is fetched and drawn larger — "overzoom",
+   * which is what every map does. The alternative is requesting tiles that do
+   * not exist: a wall of 404s on somebody else's server and a blank screen
+   * here, at exactly the zoom a surveyor is most likely to want.
+   */
+  maxZoom = 22,
 ): readonly (TileRef & { readonly left: number; readonly top: number; readonly size: number })[] {
-  const z = Math.max(0, Math.min(22, Math.round(zoom)));
+  const z = Math.max(0, Math.min(22, Math.min(maxZoom, Math.round(zoom))));
   const count = 2 ** z;
 
   /*
