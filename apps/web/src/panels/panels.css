@@ -721,3 +721,65 @@
   color: var(--ink-tertiary);
   font-weight: var(--weight-regular);
 }
+
+/* --- The map view ------------------------------------------------------- */
+
+/*
+ * The parcel drawn in degrees. A shape, not a basemap — see MapSheet for why
+ * there are no tiles behind it.
+ */
+.mapview__outline {
+  width: 100%;
+  aspect-ratio: 1;
+  max-height: 320px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--surface-sunken);
+}
+
+.mapview__ring {
+  fill: color-mix(in srgb, var(--accent) 14%, transparent);
+  stroke: var(--accent);
+  stroke-width: 0.8;
+  stroke-linejoin: round;
+}
+
+.mapview__feature {
+  fill: none;
+  stroke: var(--ink-tertiary);
+  stroke-width: 0.6;
+  stroke-linejoin: round;
+}
+
+.mapview__point {
+  fill: var(--ink-primary);
+}
+
+.mapview__grid {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--space-3);
+}
+
+.mapview__table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: var(--text-caption);
+}
+
+.mapview__table caption {
+  text-align: left;
+  padding-bottom: var(--space-2);
+}
+
+.mapview__table th,
+.mapview__table td {
+  padding: var(--space-1) var(--space-2);
+  border-bottom: 1px solid var(--border);
+  text-align: left;
+}
+
+.mapview__table td.numeric {
+  text-align: right;
+}

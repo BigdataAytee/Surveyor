@@ -414,6 +414,72 @@ for (const [name, viewport] of [
   await page.close();
 }
 
+// --- The map uses a converted copy, and the survey is untouched -------------
+
+{
+  /*
+   * The whole workflow, end to end in the app: the survey stays in Minna, the
+   * map gets a WGS 84 copy, and opening the map changes nothing. The last part
+   * is the one worth driving in a browser — a conversion that quietly wrote
+   * back would be invisible in the engine tests and obvious here, because the
+   * plan's own coordinates would move.
+   */
+  const page = await open('map', PHONE);
+
+  const gridBefore = await page.evaluate(() =>
+    Object.keys(window.localStorage)
+      .filter((key) => key.startsWith('surveyor.project.'))
+      .map((key) => window.localStorage.getItem(key))
+      .join(''),
+  );
+  expect(/544800/.test(gridBefore), 'map: the sample is not stored in Minna grid coordinates');
+
+  await page.getByRole('button', { name: 'Open menu' }).click();
+  await page.waitForTimeout(400);
+  await page.getByRole('button', { name: 'Map', exact: true }).click();
+  await page.waitForTimeout(1200);
+
+  const shown = (await page.textContent('body')) ?? '';
+  expect(/Minna to WGS 84/.test(shown), 'map: the transformation is not named on screen');
+  expect(/±3 m/.test(shown), 'map: the accuracy of the conversion is not stated');
+  expect(
+    (await page.locator('.mapview__ring').count()) > 0,
+    'map: the parcel was not drawn in the mapping frame',
+  );
+  await shot(page, 'map-wgs84');
+
+  // What the table shows must be degrees, not eastings.
+  const table = (await page.locator('.mapview__table').innerText()) ?? '';
+  expect(/6\.5\d{5}/.test(table), `map: no latitudes in the converted table — "${table.slice(0, 80)}"`);
+  expect(!/544800/.test(table), 'map: a Minna easting reached the map table');
+
+  await page.keyboard.press('Escape');
+  await page.waitForTimeout(800);
+
+  // The plan is still in Minna, on screen and on disk.
+  await page.locator('.topbar__title').click();
+  await page.waitForTimeout(600);
+  expect(
+    /Minna \/ UTM zone 31N/.test((await page.textContent('body')) ?? ''),
+    'map: the survey stopped being on Minna after being mapped',
+  );
+  await page.keyboard.press('Escape');
+  await page.waitForTimeout(600);
+
+  const gridAfter = await page.evaluate(() =>
+    Object.keys(window.localStorage)
+      .filter((key) => key.startsWith('surveyor.project.'))
+      .map((key) => window.localStorage.getItem(key))
+      .join(''),
+  );
+  expect(/544800/.test(gridAfter), 'map: the stored survey no longer holds its Minna coordinates');
+  expect(
+    !/"easting":3\.40|"easting":6\.50/.test(gridAfter),
+    'map: degrees were written back into the survey',
+  );
+  await page.close();
+}
+
 // --- Logging out of a device actually empties it ----------------------------
 
 {

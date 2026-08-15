@@ -89,6 +89,53 @@ blank sheet starts on, never an inference. An imported survey naming a system
 the app does not know still halts and asks, and one naming `EPSG:27700` still
 gets the British National Grid.
 
+### Putting the survey on a map
+
+Maps speak WGS 84 and nothing else, and the survey is in Minna. The workflow,
+in `packages/engine/src/geodesy`, is one direction only:
+
+```
+the survey stays in Minna  →  a converted copy is made  →  the map uses the copy
+```
+
+Nothing is written back. `wgs84Copy(model)` reads the Survey Data Model and
+returns a *separate* structure — not a modified model, not a model at all. The
+Minna eastings and northings stay exactly as measured for viewing, editing,
+exporting and the survey record, because those are the numbers on the plan that
+gets lodged and they are the legal description of the parcel. The Map panel is
+the only place in the app that works in degrees.
+
+The conversion is done properly, not approximated:
+
+| Step | How |
+|---|---|
+| Grid → geographic | Transverse Mercator, Redfearn series, on Clarke 1880 (RGS) — the ellipsoid Minna is defined on, not one of the other Clarke 1880s |
+| Geographic → geocentric | Exact, on the source ellipsoid |
+| Datum shift | Helmert. Minna → WGS 84 uses **EPSG:1310, "Minna to WGS 84 (1)"** — a geocentric translation of −92, −93, +122 m, stated accuracy of the order of 3 m |
+| Geocentric → geographic | Iterated to double precision, not Bowring's approximation |
+
+Nothing is guessed. A grid the app has no projection for, or a datum with no
+named transformation, produces a refusal that names what is missing — never a
+number. That matters more than it sounds: an invented datum shift produces
+coordinates that plot beautifully on a satellite image and are a hundred metres
+from the truth, and nothing downstream can notice.
+
+The transformation's accuracy travels with everything it produces — on screen,
+and in the properties of every GeoJSON file. A position good to a few metres is
+exactly right for finding a site and exactly wrong for setting a boundary peg,
+and the only way anyone can tell which they are holding is if the number is
+attached to it. A surveyor with parameters derived from control observed in
+their own area can supply them through the `transformation` option, and they
+replace the national set rather than adjusting it.
+
+The projection is checked against numerical integration of the meridional
+radius of curvature rather than against itself, the same place converts
+identically whether it was computed on UTM zone 31N or the West Belt, and the
+Minna shift is asserted to move a position by the order of magnitude that datum
+is known to differ by — a shift of a few metres would mean it had not been
+applied, one of several kilometres would mean the wrong ellipsoid or a sign
+error, and both are invisible on a map.
+
 ### Working in the app
 
 - **The site name in the title bar** opens Project: what the site is called,
@@ -460,7 +507,7 @@ VITE_AUTH_ENDPOINT=http://127.0.0.1:8788/api/auth npm run dev --workspace @surve
 ## Testing
 
 ```bash
-npm test                                    # 274 tests across contracts, engine, web and auth
+npm test                                    # 302 tests across contracts, engine, web and auth
 npm run smoke --workspace @surveyor/web     # browser flows (needs a preview server)
 ```
 

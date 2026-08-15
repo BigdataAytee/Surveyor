@@ -51,6 +51,7 @@ export type SidebarPanel =
   | 'saved'
   | 'reports'
   | 'documents'
+  | 'map'
   | 'settings'
   | 'help';
 
@@ -80,6 +81,7 @@ export const SIDEBAR_SECONDARY: readonly SidebarItem[] = [
   { id: 'saved', label: 'Saved', glyph: '★', target: { kind: 'panel', panel: 'saved' } },
   { id: 'reports', label: 'Reports', glyph: '❋', target: { kind: 'panel', panel: 'reports' } },
   { id: 'documents', label: 'Documents', glyph: '❐', target: { kind: 'panel', panel: 'documents' } },
+  { id: 'map', label: 'Map', glyph: '◈', target: { kind: 'panel', panel: 'map' } },
   { id: 'settings', label: 'Settings', glyph: '⚙', target: { kind: 'panel', panel: 'settings' } },
   { id: 'help', label: 'Help', glyph: '?', target: { kind: 'panel', panel: 'help' } },
   { id: 'logout', label: 'Logout', glyph: '⇥', target: { kind: 'signout' } },

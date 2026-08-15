@@ -36,6 +36,7 @@ import {
 import { ProfileSheet } from '../panels/ProfileSheet.js';
 import { SavedSheet } from '../panels/SavedSheet.js';
 import { ReportsSheet } from '../panels/ReportsSheet.js';
+import { MapSheet } from '../panels/MapSheet.js';
 import { DocumentsSheet } from '../panels/DocumentsSheet.js';
 import { SettingsSheet } from '../panels/SettingsSheet.js';
 import { HelpSheet } from '../panels/HelpSheet.js';
@@ -62,6 +63,7 @@ type Panel =
   | 'saved'
   | 'reports'
   | 'documents'
+  | 'map'
   | 'settings'
   | 'help'
   | null;
@@ -693,6 +695,20 @@ export function Workspace() {
         <ReportsSheet onClose={() => setPanel(null)} />
       </BottomSheet>
 
+      {/*
+        The one view in the app that works in latitude and longitude. It reads
+        the survey and converts a copy; nothing here writes back.
+      */}
+      <BottomSheet
+        open={panel === 'map'}
+        onClose={() => setPanel(null)}
+        title="Map"
+        subtitle="A converted copy, for finding the site. The survey stays as measured."
+        size="full"
+      >
+        <MapSheet onClose={() => setPanel(null)} />
+      </BottomSheet>
+
       <BottomSheet
         open={panel === 'documents'}
         onClose={() => setPanel(null)}
@@ -1158,6 +1174,7 @@ function activeSection(panel: Panel): string | null {
     case 'saved':
     case 'reports':
     case 'documents':
+    case 'map':
     case 'settings':
     case 'help':
       return panel;
