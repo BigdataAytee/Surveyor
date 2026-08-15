@@ -264,7 +264,7 @@ for (const [name, viewport] of [
 
   // Headerless, so the extractor must ask about the coordinate order.
   await page.locator('.importer__input').fill(
-    ['A,534800,182900', 'B,534840,182900', 'C,534840,182930', 'D,534800,182930'].join('\n'),
+    ['A,544800,718900', 'B,544840,718900', 'C,544840,718930', 'D,544800,718930'].join('\n'),
   );
   await page.waitForTimeout(400);
 
@@ -294,15 +294,15 @@ for (const [name, viewport] of [
   // Every one of these decorations used to be fatal on its own, because every
   // non-empty line was assumed to be a row of the table.
   const MESSY = [
-    'BOUNDARY SURVEY — 25 High Street',
+    'BOUNDARY SURVEY — PLOT 15 ADEOLA CLOSE',
     'Surveyed 11/08/2026',
     '',
     'Pt No   Easting     Northing    Description',
     '-----   -------     --------    -----------',
-    'P1      534800.00   182900.00   Corner, iron pin',
-    'P2      534845.00   182900.00   Corner',
-    'P3      534845.00   182935.00   Corner',
-    'P4      534800.00   182935.00   Corner',
+    'P1      544800.00   718900.00   Corner, iron pin',
+    'P2      544845.00   718900.00   Corner',
+    'P3      544845.00   718935.00   Corner',
+    'P4      544800.00   718935.00   Corner',
     'Total: 4 points',
   ].join('\n');
 
@@ -350,7 +350,7 @@ for (const [name, viewport] of [
         new ClipboardEvent('paste', { clipboardData: transfer, bubbles: true, cancelable: true }),
       );
     },
-    [handle, ['P1,534800,182900', 'P2,534845,182900', 'P3,534845,182935', 'P4,534800,182935'].join('\n')],
+    [handle, ['P1,544800,718900', 'P2,544845,718900', 'P3,544845,718935', 'P4,544800,718935'].join('\n')],
   );
   await page.waitForTimeout(500);
 
@@ -444,7 +444,7 @@ for (const [name, viewport] of [
   const title = (await page.locator('.topbar__title').innerText()) ?? '';
   expect(!/Alpha Farm/.test(title), 'logout: the erased project came back');
   expect(
-    !/High Street|Fairview/.test(title),
+    !/Adeola|Ikeja/.test(title),
     `logout: the sample survey was seeded over the erase — "${title.trim()}"`,
   );
 

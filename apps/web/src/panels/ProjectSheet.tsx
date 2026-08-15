@@ -12,7 +12,7 @@
 
 import { useState } from 'react';
 
-import { JURISDICTIONS } from '@surveyor/engine';
+import { JURISDICTIONS, KNOWN_CRS } from '@surveyor/engine';
 
 import { Button, Card, Field, TextInput } from '../ui/primitives.js';
 import { EMPTY_MODEL, useProject } from '../state/store.js';
@@ -44,7 +44,7 @@ export function ProjectSheet({
         <TextInput
           ariaLabel="Site name or address"
           value={state.model.metadata.siteAddress ?? ''}
-          placeholder="25 High Street"
+          placeholder="Plot 15, Adeola Close, Ikeja"
           onChange={(value) =>
             dispatch({
               type: 'set-metadata',
@@ -74,6 +74,53 @@ export function ProjectSheet({
           {[...JURISDICTIONS.values()].map((jurisdiction) => (
             <option key={jurisdiction.id} value={jurisdiction.id}>
               {jurisdiction.name}
+            </option>
+          ))}
+        </select>
+      </Field>
+
+      {/*
+        Which system the coordinates are in.
+
+        Recorded, not applied: picking a different one restates what the
+        numbers mean, it does not move them. That is the honest behaviour — the
+        eastings and northings are what the surveyor measured, and reprojecting
+        them because a dropdown changed would be the app authoring survey
+        values. The hint says so, because someone expecting a conversion and
+        not getting one would be badly surprised.
+      */}
+      <Field
+        label="Coordinate system"
+        hint="What the eastings and northings are measured in. Changing this does not move them."
+        explanation={
+          'Every system here is a different frame of reference. The same pair ' +
+          'of numbers is a different place on the ground in each, so this ' +
+          'records what your survey was computed in rather than converting ' +
+          'between them — a conversion needs the datum transformation for your ' +
+          'area, and getting one wrong moves a boundary by metres without ' +
+          'looking wrong.'
+        }
+      >
+        <select
+          className="panel__select"
+          aria-label="Coordinate system"
+          value={state.model.crs.code ?? ''}
+          onChange={(event) => {
+            const chosen = KNOWN_CRS[event.target.value];
+            if (chosen) dispatch({ type: 'set-crs', crs: chosen });
+          }}
+        >
+          {/*
+            A survey brought in from elsewhere may sit on something not in the
+            list. It is shown rather than silently replaced by whichever entry
+            happens to be first, which would misdescribe the plan.
+          */}
+          {state.model.crs.code && !KNOWN_CRS[state.model.crs.code] ? (
+            <option value={state.model.crs.code}>{state.model.crs.name}</option>
+          ) : null}
+          {Object.values(KNOWN_CRS).map((crs) => (
+            <option key={crs.code} value={crs.code}>
+              {crs.name}
             </option>
           ))}
         </select>

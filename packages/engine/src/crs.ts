@@ -261,8 +261,52 @@ export type CrsResolution =
 /**
  * A small set of well-known systems, offered as *choices* to the user. This is
  * a lookup for a code the user supplied — never an inference from coordinates.
+ *
+ * The Nigerian systems come first because they are what this tool is used for.
+ * All five sit on the **Minna** datum (Clarke 1880 (RGS) ellipsoid), which is
+ * the national geodetic datum: UTM for the two zones covering most of the
+ * country, and the three national belts that cadastral plans are commonly
+ * computed on. They are separate systems, not variants — a coordinate from one
+ * is metres out of place in another — so which one a survey was measured in is
+ * something the surveyor states rather than something this app guesses.
  */
 export const KNOWN_CRS: Readonly<Record<string, Crs>> = {
+  'EPSG:26331': {
+    code: 'EPSG:26331',
+    name: 'Minna / UTM zone 31N',
+    datum: 'Minna',
+    units: 'metre',
+    // Whole-circle bearings, which is what Nigerian plans carry.
+    bearingConvention: 'azimuth',
+  },
+  'EPSG:26332': {
+    code: 'EPSG:26332',
+    name: 'Minna / UTM zone 32N',
+    datum: 'Minna',
+    units: 'metre',
+    bearingConvention: 'azimuth',
+  },
+  'EPSG:26391': {
+    code: 'EPSG:26391',
+    name: 'Minna / Nigeria West Belt',
+    datum: 'Minna',
+    units: 'metre',
+    bearingConvention: 'azimuth',
+  },
+  'EPSG:26392': {
+    code: 'EPSG:26392',
+    name: 'Minna / Nigeria Mid Belt',
+    datum: 'Minna',
+    units: 'metre',
+    bearingConvention: 'azimuth',
+  },
+  'EPSG:26393': {
+    code: 'EPSG:26393',
+    name: 'Minna / Nigeria East Belt',
+    datum: 'Minna',
+    units: 'metre',
+    bearingConvention: 'azimuth',
+  },
   'EPSG:27700': {
     code: 'EPSG:27700',
     name: 'OSGB36 / British National Grid',
@@ -292,6 +336,24 @@ export const KNOWN_CRS: Readonly<Record<string, Crs>> = {
     bearingConvention: 'azimuth',
   },
 };
+
+/**
+ * What a new plan is drawn in unless the surveyor says otherwise.
+ *
+ * A default is not a guess about a particular survey — the pipeline still
+ * halts rather than infer a CRS from coordinates — it is what the blank sheet
+ * starts on, and it should be the system the person opening this app actually
+ * works in.
+ *
+ * Note that a scale factor is deliberately absent. UTM's is 0.9996 only on the
+ * central meridian and grows to roughly 1.0004 at the edge of a zone, and the
+ * combined factor also depends on height above the ellipsoid. There is no one
+ * correct constant, so distances are treated as grid distances until a
+ * surveyor supplies the factor for their site.
+ */
+export const DEFAULT_CRS_CODE = 'EPSG:26331';
+
+export const DEFAULT_CRS: Crs = KNOWN_CRS[DEFAULT_CRS_CODE]!;
 
 export interface PartialCrs {
   readonly code?: string;

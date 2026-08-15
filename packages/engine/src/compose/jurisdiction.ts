@@ -145,6 +145,60 @@ export const UK_TEMPLATE: JurisdictionTemplate = {
   defaultOrientation: 'portrait',
 };
 
+/**
+ * Nigeria — a survey plan for lodging with a state Surveyor-General.
+ *
+ * The default, because it is what this tool is used for. Two things about it
+ * are worth being explicit on.
+ *
+ * The bearings are whole-circle. Quadrant bearings — N 45°30' E — are the UK
+ * and US habit; a Nigerian plan carries 045°30', and the two are the same
+ * angle written in a way that a reader of the wrong one has to convert in
+ * their head.
+ *
+ * The notes here are statements of fact about the drawing, not claims about
+ * the law. Requirements differ between states, and a template that printed a
+ * confident legal assertion nobody had checked would be worse than one that
+ * prints nothing — so what belongs on a particular plan for a particular state
+ * is left to the surveyor signing it, who is the person who actually knows.
+ */
+export const NIGERIA_TEMPLATE: JurisdictionTemplate = {
+  id: 'ng-survey-plan',
+  name: 'Nigeria — survey plan',
+  titleBlock: [
+    { label: 'Description of land', source: { from: 'metadata', key: 'siteAddress' }, required: true },
+    { label: 'Client', source: { from: 'metadata', key: 'client' }, required: true },
+    { label: 'Plan number', source: { from: 'metadata', key: 'jobNumber' }, required: true },
+    { label: 'Surveyor', source: { from: 'metadata', key: 'surveyor' }, required: true },
+    { label: 'Scale', source: { from: 'computed', key: 'scale' }, required: true },
+    { label: 'Sheet', source: { from: 'computed', key: 'sheetSize' }, required: true },
+    { label: 'Date of survey', source: { from: 'metadata', key: 'date' }, required: true },
+    { label: 'Area', source: { from: 'computed', key: 'area' }, required: true },
+    { label: 'Coordinate system', source: { from: 'computed', key: 'crs' }, required: true },
+    // The plan is only a plan once a registered surveyor has signed it.
+    { label: 'Surveyor’s signature', source: { from: 'blank' }, required: true },
+  ],
+  requiredNotes: [
+    'All bearings are grid bearings and all distances are in metres.',
+    'Beacons are as found or as set at the date of survey.',
+  ],
+  minimumLabelHeightMm: 2,
+  closureTolerance: DEFAULT_CLOSURE_TOLERANCE,
+  format: { ...DEFAULT_FORMAT_RULES, distanceDecimals: 2, coordinateDecimals: 2, areaDecimals: 0 },
+  bearingConvention: 'azimuth',
+  legendRequired: true,
+  preferredSheets: ['A4', 'A3', 'A2'],
+  defaultOrientation: 'portrait',
+  /*
+   * Corner coordinates go on the face of the sheet.
+   *
+   * A Nigerian survey plan is read as a coordinate document — the beacon
+   * schedule is the substance of it — so they are promoted out of the default
+   * third tier, as they are for a US boundary survey and for the same reason.
+   */
+  priorityOverrides: { coordinate: 2 },
+};
+
 export const US_TEMPLATE: JurisdictionTemplate = {
   id: 'us-generic',
   name: 'US — generic boundary survey',
@@ -171,9 +225,16 @@ export const US_TEMPLATE: JurisdictionTemplate = {
   priorityOverrides: { coordinate: 2 },
 };
 
+/**
+ * Nigeria first, because it is the one a new plan starts on and the one most
+ * plans drawn here will stay on. The order is what a picker shows.
+ */
 export const JURISDICTIONS: ReadonlyMap<string, JurisdictionTemplate> = new Map(
-  [GENERIC_TEMPLATE, UK_TEMPLATE, US_TEMPLATE].map((t) => [t.id, t]),
+  [NIGERIA_TEMPLATE, GENERIC_TEMPLATE, UK_TEMPLATE, US_TEMPLATE].map((t) => [t.id, t]),
 );
+
+/** What a new plan is drawn under unless the surveyor picks another. */
+export const DEFAULT_JURISDICTION = NIGERIA_TEMPLATE.id;
 
 /**
  * Look up a template. Falls back to the generic one so an unknown jurisdiction

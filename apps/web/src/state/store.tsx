@@ -32,6 +32,8 @@ import type {
 } from '@surveyor/contracts';
 import { confirm } from '@surveyor/contracts';
 import {
+  DEFAULT_CRS,
+  DEFAULT_JURISDICTION,
   arrayDisplacements,
   chamferCorner,
   distanceBetween,
@@ -188,6 +190,12 @@ export type Action =
         [K in keyof SurveyDataModel['metadata']]?: SurveyDataModel['metadata'][K] | undefined;
       };
     }
+  /**
+   * State which coordinate system the survey was measured in.
+   *
+   * Records, never reprojects. See the reducer case for why.
+   */
+  | { type: 'set-crs'; crs: SurveyDataModel['crs'] }
   | { type: 'suggest'; suggestion: Suggestion }
   | { type: 'accept-suggestion'; id: string; at: string }
   | { type: 'dismiss-suggestion'; id: string }
@@ -796,6 +804,19 @@ export function reducer(state: ProjectState, action: Action): ProjectState {
       });
     }
 
+    /*
+     * Say which system the coordinates are in — without touching them.
+     *
+     * This records a fact about the survey, it does not reproject it. The
+     * numbers a surveyor typed are the numbers they measured, and quietly
+     * moving them because a dropdown changed would be the app inventing
+     * coordinates, which is the one thing it does not do. Someone who picks
+     * the wrong system sees a plan in the wrong place and can pick again; a
+     * plan whose figures were silently rewritten has no way back.
+     */
+    case 'set-crs':
+      return commit(state, { ...state.model, crs: action.crs });
+
     case 'suggest':
       return { ...state, suggestions: [...state.suggestions, action.suggestion] };
 
@@ -933,10 +954,17 @@ export function initialState(): ProjectState {
   };
 }
 
-/** The empty project, for the "start from scratch" path. */
+/**
+ * The empty project, for the "start from scratch" path.
+ *
+ * Named constants rather than a copy of the sample's, so a blank sheet and the
+ * worked example cannot end up on different coordinate systems — which is the
+ * kind of difference nobody notices until two plans that should overlay are
+ * ten kilometres apart.
+ */
 export const EMPTY_MODEL: SurveyDataModel = {
-  metadata: { jurisdiction: 'uk-land-registry' },
-  crs: SAMPLE_PROJECT.crs,
+  metadata: { jurisdiction: DEFAULT_JURISDICTION },
+  crs: DEFAULT_CRS,
   points: [],
   boundary: [],
   siteFeatures: [],

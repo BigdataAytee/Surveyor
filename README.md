@@ -61,11 +61,40 @@ reports real progress rather than animating a timer.
 - **Nothing unconfirmed is exported.** `composePlan` refuses while any label is
   still `ai-suggested`, and names the ones blocking it.
 
+### Coordinate systems
+
+A new plan is drawn on **Minna / UTM zone 31N** (`EPSG:26331`) under the
+**Nigeria — survey plan** template, with whole-circle bearings. The other four
+Nigerian systems on the Minna datum are offered beside it — UTM zone 32N and
+the West, Mid and East Belts — and so are the systems for elsewhere, so a
+survey brought in from another country can still say what it is.
+
+Two things about this deserve stating plainly.
+
+**Picking a system records what the survey was measured in; it does not
+reproject it.** The same easting and northing is a different place on the
+ground in each system, and a conversion needs the datum transformation for the
+area. Quietly moving a surveyor's figures because a dropdown changed would be
+the app authoring survey values, which is the one thing it does not do. Pick
+the wrong one and the plan is mislabelled and can be corrected; rewrite the
+numbers and there is no way back.
+
+**No scale factor is assumed.** UTM's is 0.9996 on the central meridian and
+about 1.0004 at the edge of a zone, and the combined factor also depends on
+height. There is no correct constant, so distances are treated as grid
+distances until a surveyor supplies the factor for their site.
+
+The engine's central rule is unchanged by any of this: a *default* is what a
+blank sheet starts on, never an inference. An imported survey naming a system
+the app does not know still halts and asks, and one naming `EPSG:27700` still
+gets the British National Grid.
+
 ### Working in the app
 
 - **The site name in the title bar** opens Project: what the site is called,
-  which jurisdiction's rules it is drawn under, and starting a new one. Starting
-  over asks twice, and Undo still reaches back past it.
+  which coordinate system it was measured in, which jurisdiction's rules it is
+  drawn under, and starting a new one. Starting over asks twice, and Undo still
+  reaches back past it.
 - **Select / Draw / Measure / Dimension** (B.3). Draw places boundary corners by
   tapping; a new corner is inserted into the edge it sits nearest, so the shape
   does not fold over itself. Measure reports bearing and distance between two
@@ -431,7 +460,7 @@ VITE_AUTH_ENDPOINT=http://127.0.0.1:8788/api/auth npm run dev --workspace @surve
 ## Testing
 
 ```bash
-npm test                                    # 243 tests across contracts, engine, web and auth
+npm test                                    # 274 tests across contracts, engine, web and auth
 npm run smoke --workspace @surveyor/web     # browser flows (needs a preview server)
 ```
 
