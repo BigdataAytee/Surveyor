@@ -56,7 +56,20 @@ const server = spawn(process.execPath, [serverPath], {
   stdio: ['ignore', 'pipe', 'pipe'],
 });
 server.stderr.on('data', (chunk) => {
-  problems.push(`auth server: ${String(chunk).trim()}`);
+  const text = String(chunk).trim();
+  /*
+   * A fault, not a log line.
+   *
+   * This used to flag everything on stderr, which was right until the server
+   * gained something legitimate to say there: with no mail webhook configured
+   * it writes the verification link to the log and reports that it could not
+   * deliver — a real, documented mode, and exactly what this run is in. A
+   * canary that fires on normal operation is one that gets muted, so it now
+   * looks for what it actually meant: an exception.
+   */
+  if (/\berror\b|Error:|\bat .*\(.*:\d+:\d+\)/i.test(text)) {
+    problems.push(`auth server: ${text}`);
+  }
 });
 
 /*

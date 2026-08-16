@@ -21,14 +21,41 @@
 import { useEffect, useId, useRef, useState } from 'react';
 
 import { Button, Card } from '../ui/primitives.js';
-import { createAccount, signIn, type Account } from './session.js';
+import {
+  confirmEmail,
+  createAccount,
+  linkFromUrl,
+  requestPasswordReset,
+  resendVerification,
+  resetPassword,
+  signIn,
+  type Account,
+} from './session.js';
 import './auth.css';
 
 /** Mirrors the server's rule, so the message arrives before the request does. */
 const MIN_PASSWORD_LENGTH = 10;
 
+/**
+ * What this screen is doing at the moment.
+ *
+ * One machine rather than a handful of booleans, because the states are
+ * genuinely exclusive and the bug the architecture warns about — being half
+ * signed in and half waiting to confirm — is exactly what a set of independent
+ * flags produces.
+ */
+type Screen =
+  | { readonly kind: 'form' }
+  /** Registered; the next step is in their inbox. */
+  | { readonly kind: 'awaiting-verification'; readonly message: string }
+  /** Arrived on a reset link and choosing a new password. */
+  | { readonly kind: 'reset'; readonly token: string }
+  /** Something finished and there is nothing to do but read it. */
+  | { readonly kind: 'said'; readonly message: string; readonly tone: 'good' | 'bad' };
+
 export function SignIn({ onSignedIn }: { readonly onSignedIn: (account: Account) => void }) {
   const [mode, setMode] = useState<'in' | 'up'>('in');
+  const [screen, setScreen] = useState<Screen>({ kind: 'form' });
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [name, setName] = useState('');
@@ -36,6 +63,9 @@ export function SignIn({ onSignedIn }: { readonly onSignedIn: (account: Account)
   const [reveal, setReveal] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  /** Set when the server says the address needs confirming, so we can offer it. */
+  const [unverified, setUnverified] = useState(false);
+  const [notice, setNotice] = useState<string | null>(null);
 
   const emailId = useId();
   const passwordId = useId();
@@ -46,6 +76,31 @@ export function SignIn({ onSignedIn }: { readonly onSignedIn: (account: Account)
     emailRef.current?.focus();
   }, []);
 
+  /**
+   * A link somebody arrived on.
+   *
+   * Read once, on mount, and taken out of the address bar as it is read — a
+   * one-time token left in `location.href` ends up in history, in a
+   * screenshot, and in the next request's `Referer`.
+   */
+  useEffect(() => {
+    const link = linkFromUrl();
+    if (!link) return;
+
+    if (link.kind === 'reset') {
+      setScreen({ kind: 'reset', token: link.token });
+      return;
+    }
+
+    void confirmEmail(link.token).then((result) => {
+      setScreen(
+        result.ok
+          ? { kind: 'said', message: result.message, tone: 'good' }
+          : { kind: 'said', message: result.error, tone: 'bad' },
+      );
+    });
+  }, []);
+
   const tooShort = mode === 'up' && password.length > 0 && password.length < MIN_PASSWORD_LENGTH;
 
   async function submit(event: React.FormEvent): Promise<void> {
@@ -53,6 +108,8 @@ export function SignIn({ onSignedIn }: { readonly onSignedIn: (account: Account)
     if (busy) return;
 
     setError(null);
+    setNotice(null);
+    setUnverified(false);
     setBusy(true);
 
     const result =
@@ -64,9 +121,83 @@ export function SignIn({ onSignedIn }: { readonly onSignedIn: (account: Account)
 
     if (!result.ok) {
       setError(result.error);
+      setUnverified(result.reason === 'unverified');
       return;
     }
+
+    /*
+     * Registered but not signed in.
+     *
+     * Kept as its own screen rather than dropped into the app, because the
+     * account genuinely is not usable yet and showing the drawing would be a
+     * lie the next request would contradict.
+     */
+    if ('awaitingVerification' in result) {
+      setScreen({ kind: 'awaiting-verification', message: result.message });
+      return;
+    }
+
     onSignedIn(result.account);
+  }
+
+  async function resend(): Promise<void> {
+    setBusy(true);
+    const message = await resendVerification(email);
+    setBusy(false);
+    setNotice(message);
+  }
+
+  async function forgotten(): Promise<void> {
+    if (email.trim().length === 0) {
+      setError('Enter your email address first, and we will send a reset link to it.');
+      return;
+    }
+    setBusy(true);
+    const message = await requestPasswordReset(email);
+    setBusy(false);
+    setError(null);
+    setNotice(message);
+  }
+
+  if (screen.kind === 'awaiting-verification') {
+    return (
+      <Standalone title="Check your email" subtitle={screen.message}>
+        {notice ? <p className="auth__note" role="status">{notice}</p> : null}
+        <Button full disabled={busy} onClick={() => void resend()}>
+          {busy ? 'Working…' : 'Send it again'}
+        </Button>
+        <Button
+          full
+          variant="primary"
+          onClick={() => {
+            setScreen({ kind: 'form' });
+            setMode('in');
+            setPassword('');
+          }}
+        >
+          Back to sign in
+        </Button>
+      </Standalone>
+    );
+  }
+
+  if (screen.kind === 'said') {
+    return (
+      <Standalone title="Surveyor" subtitle={screen.message} tone={screen.tone}>
+        <Button full variant="primary" onClick={() => setScreen({ kind: 'form' })}>
+          Sign in
+        </Button>
+      </Standalone>
+    );
+  }
+
+  if (screen.kind === 'reset') {
+    return (
+      <ChooseNewPassword
+        token={screen.token}
+        onDone={(message) => setScreen({ kind: 'said', message, tone: 'good' })}
+      />
+    );
   }
 
   return (
@@ -85,6 +216,27 @@ export function SignIn({ onSignedIn }: { readonly onSignedIn: (account: Account)
           <Card tone="sunken">
             <p className="auth__error" role="alert">
               {error}
+            </p>
+            {unverified ? (
+              /*
+               * The one failure with a next step, so it gets a button.
+               *
+               * A wrong password gets no button, because there is nothing to
+               * offer — and a screen that treated the two the same would
+               * either be useless here or would tell a guesser, by its own
+               * shape, that this address has an account.
+               */
+              <Button size="sm" disabled={busy} onClick={() => void resend()}>
+                Send the confirmation link again
+              </Button>
+            ) : null}
+          </Card>
+        ) : null}
+
+        {notice ? (
+          <Card tone="sunken">
+            <p className="auth__note" role="status">
+              {notice}
             </p>
           </Card>
         ) : null}
@@ -170,6 +322,14 @@ export function SignIn({ onSignedIn }: { readonly onSignedIn: (account: Account)
           {busy ? 'Working…' : mode === 'in' ? 'Sign in' : 'Create account'}
         </Button>
 
+        {mode === 'in' ? (
+          <p className="auth__switch">
+            <button type="button" className="auth__link" onClick={() => void forgotten()}>
+              I have forgotten my password
+            </button>
+          </p>
+        ) : null}
+
         <p className="auth__switch">
           {mode === 'in' ? 'No account yet?' : 'Already have an account?'}{' '}
           <button
@@ -180,6 +340,8 @@ export function SignIn({ onSignedIn }: { readonly onSignedIn: (account: Account)
               // password because the wrong tab was open is a small cruelty.
               setMode((current) => (current === 'in' ? 'up' : 'in'));
               setError(null);
+              setNotice(null);
+              setUnverified(false);
             }}
           >
             {mode === 'in' ? 'Create one' : 'Sign in'}
@@ -187,6 +349,123 @@ export function SignIn({ onSignedIn }: { readonly onSignedIn: (account: Account)
         </p>
 
       </form>
+    </div>
+  );
+}
+
+/**
+ * Choosing a new password, having arrived on a reset link.
+ *
+ * Its own component because it is its own screen with its own single job, and
+ * because it must not inherit the sign-in form's fields — a reset page that
+ * quietly carried an email and a password from the previous screen is a reset
+ * page that can apply to the wrong account.
+ */
+function ChooseNewPassword({
+  token,
+  onDone,
+}: {
+  readonly token: string;
+  readonly onDone: (message: string) => void;
+}) {
+  const [password, setPassword] = useState('');
+  const [current, setCurrent] = useState(token);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [reveal, setReveal] = useState(false);
+  const fieldId = useId();
+
+  async function submit(event: React.FormEvent): Promise<void> {
+    event.preventDefault();
+    if (busy) return;
+
+    setBusy(true);
+    const result = await resetPassword(current, password);
+    setBusy(false);
+
+    if (result.ok) {
+      onDone(result.message);
+      return;
+    }
+    setError(result.error);
+    // The server hands back a fresh link when it was the password it did not
+    // like, so a typo costs a retry rather than a trip to the inbox.
+    if (result.token) setCurrent(result.token);
+  }
+
+  return (
+    <div className="auth">
+      <form className="auth__card" onSubmit={submit} noValidate>
+        <header className="auth__head">
+          <h1 className="auth__title">Choose a new password</h1>
+          <p className="auth__subtitle">
+            Everything signed in to this account will be signed out.
+          </p>
+        </header>
+
+        {error ? (
+          <Card tone="sunken">
+            <p className="auth__error" role="alert">
+              {error}
+            </p>
+          </Card>
+        ) : null}
+
+        <div className="auth__field">
+          <div className="auth__label-row">
+            <label htmlFor={fieldId}>New password</label>
+            <button
+              type="button"
+              className="auth__reveal"
+              aria-pressed={reveal}
+              onClick={() => setReveal((on) => !on)}
+            >
+              {reveal ? 'Hide' : 'Show'}
+            </button>
+          </div>
+          <input
+            id={fieldId}
+            className="input"
+            type={reveal ? 'text' : 'password'}
+            autoComplete="new-password"
+            required
+            value={password}
+            onChange={(event) => setPassword(event.target.value)}
+          />
+          <p className="auth__hint">At least {MIN_PASSWORD_LENGTH} characters.</p>
+        </div>
+
+        <Button full variant="primary" disabled={busy} type="submit">
+          {busy ? 'Working…' : 'Set my new password'}
+        </Button>
+      </form>
+    </div>
+  );
+}
+
+/** A card with a message and a way onward, for the states that are just news. */
+function Standalone({
+  title,
+  subtitle,
+  tone = 'good',
+  children,
+}: {
+  readonly title: string;
+  readonly subtitle: string;
+  readonly tone?: 'good' | 'bad';
+  readonly children: React.ReactNode;
+}) {
+  return (
+    <div className="auth">
+      <div className="auth__card">
+        <header className="auth__head">
+          <h1 className="auth__title">{title}</h1>
+          <p className={tone === 'bad' ? 'auth__error' : 'auth__subtitle'} role="status">
+            {subtitle}
+          </p>
+        </header>
+        {children}
+      </div>
     </div>
   );
 }

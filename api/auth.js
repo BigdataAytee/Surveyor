@@ -27,11 +27,23 @@
  *   AUTH_STORE_PATH  where the file store writes, when AUTH_STORE=file
  *   AUTH_ORIGINS     comma-separated origins allowed to call this. Unset,
  *                    same-origin only, which is what a normal deployment wants.
+ *   AUTH_MAIL_WEBHOOK / AUTH_MAIL_TOKEN / AUTH_MAIL_FROM
+ *                    where verification and reset mail is POSTed. Unset, links
+ *                    are written to the log and nothing is delivered.
+ *   APP_URL          the origin emailed links point at.
+ *   AUTH_REQUIRE_VERIFICATION
+ *                    '1' or '0'. Unset, verification is required exactly when
+ *                    mail can be delivered — see `_mailer.mjs` for why that is
+ *                    the only safe default.
+ *   AUTH_ADMIN_EMAILS
+ *                    comma-separated addresses granted `admin` when they
+ *                    register. This is how the first administrator exists.
  */
 
-import { handleAuth, securityHeaders } from './_auth-routes.mjs';
+import { callerAddress, handleAuth, securityHeaders } from './_auth-routes.mjs';
 import { createFileStore } from './_auth-store-file.mjs';
 import { kvStoreFromEnv } from './_auth-store-kv.mjs';
+import { adminEmailsFromEnv, mailerFromEnv, verificationRequired } from './_mailer.mjs';
 
 let cachedStore = null;
 
@@ -124,6 +136,7 @@ export default async function handler(request, response) {
   }
 
   try {
+    const mailer = mailerFromEnv();
     const result = await handleAuth(action, {
       store,
       body,
@@ -133,6 +146,10 @@ export default async function handler(request, response) {
       // Deployed behind TLS. The flag is what stops the browser sending the
       // session cookie over plain http.
       secure: true,
+      ip: callerAddress(request.headers, request.socket?.remoteAddress ?? null),
+      mailer,
+      requireVerification: verificationRequired(process.env, mailer),
+      adminEmails: adminEmailsFromEnv(),
     });
 
     const headers = securityHeaders(origin && allowed.includes(origin) ? origin : undefined);

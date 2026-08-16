@@ -1,0 +1,395 @@
+/*
+ * The console's own look, and deliberately not the app's.
+ *
+ * The Admin Console architecture is explicit that this should not reuse the
+ * surveyor-facing design system. That is not laziness in reverse — a calm,
+ * spacious, one-thing-at-a-time layout is right for somebody standing in a
+ * field with a phone, and wrong for somebody comparing four hundred rows of
+ * timestamps on a desktop. Dense tables, fixed-width numbers, and small type
+ * are correct here.
+ *
+ * Nothing is imported from `ui/`. Sharing a stylesheet is how two surfaces
+ * with opposite jobs slowly become one surface that suits neither.
+ */
+
+:root {
+  color-scheme: dark;
+
+  --bg: #0b0f14;
+  --panel: #111823;
+  --panel-2: #0e141d;
+  --line: #1f2b3a;
+  --text: #d8e2ef;
+  --muted: #8296ad;
+  --accent: #38bdf8;
+  --good: #34d399;
+  --warn: #fbbf24;
+  --bad: #f87171;
+
+  --mono: ui-monospace, SFMono-Regular, 'SF Mono', Menlo, Consolas, monospace;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--text);
+  font: 13px/1.45 system-ui, -apple-system, 'Segoe UI', sans-serif;
+}
+
+.console {
+  display: grid;
+  grid-template-columns: 190px 1fr;
+  min-height: 100vh;
+}
+
+/* --- Navigation ---------------------------------------------------------- */
+
+.nav {
+  border-right: 1px solid var(--line);
+  background: var(--panel-2);
+  padding: 14px 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.nav__brand {
+  padding: 0 14px 14px;
+  border-bottom: 1px solid var(--line);
+  margin-bottom: 10px;
+}
+
+.nav__title {
+  margin: 0;
+  font-size: 14px;
+  letter-spacing: 0.02em;
+}
+
+.nav__who {
+  margin: 4px 0 0;
+  color: var(--muted);
+  font-size: 11px;
+  word-break: break-all;
+}
+
+.nav__item {
+  appearance: none;
+  border: 0;
+  background: none;
+  color: var(--muted);
+  text-align: left;
+  padding: 7px 14px;
+  font: inherit;
+  cursor: pointer;
+  border-left: 2px solid transparent;
+}
+
+.nav__item:hover {
+  color: var(--text);
+  background: rgb(255 255 255 / 3%);
+}
+
+.nav__item.is-active {
+  color: var(--text);
+  border-left-color: var(--accent);
+  background: rgb(56 189 248 / 8%);
+}
+
+.nav__spacer {
+  flex: 1;
+}
+
+.nav__foot {
+  padding: 10px 14px 0;
+  border-top: 1px solid var(--line);
+  color: var(--muted);
+  font-size: 11px;
+}
+
+/* --- Main ---------------------------------------------------------------- */
+
+.main {
+  padding: 16px 20px 40px;
+  min-width: 0;
+}
+
+.main__head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 16px;
+  flex-wrap: wrap;
+  margin-bottom: 14px;
+}
+
+.main__title {
+  margin: 0;
+  font-size: 16px;
+  font-weight: 600;
+}
+
+.main__sub {
+  margin: 3px 0 0;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+select,
+input[type='search'],
+input[type='text'] {
+  background: var(--panel);
+  border: 1px solid var(--line);
+  color: var(--text);
+  border-radius: 4px;
+  padding: 4px 7px;
+  font: inherit;
+}
+
+/* --- Cards and figures --------------------------------------------------- */
+
+.tiles {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
+  gap: 10px;
+  margin-bottom: 18px;
+}
+
+.tile {
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  padding: 10px 12px;
+}
+
+.tile__label {
+  color: var(--muted);
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+
+.tile__value {
+  font-family: var(--mono);
+  font-size: 22px;
+  margin-top: 3px;
+}
+
+.tile__value.is-bad {
+  color: var(--bad);
+}
+
+.tile__value.is-good {
+  color: var(--good);
+}
+
+.tile__note {
+  color: var(--muted);
+  font-size: 11px;
+  margin-top: 2px;
+}
+
+.section {
+  margin-bottom: 22px;
+}
+
+.section__title {
+  font-size: 12px;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--muted);
+  margin: 0 0 7px;
+}
+
+/* --- Tables -------------------------------------------------------------- */
+
+/*
+ * Every table scrolls inside its own box.
+ *
+ * A console is nothing but wide tables, and letting one of them push the page
+ * sideways makes the navigation unreachable at exactly the moment somebody is
+ * trying to read something urgent.
+ */
+.table-wrap {
+  overflow-x: auto;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: var(--panel);
+}
+
+table {
+  border-collapse: collapse;
+  width: 100%;
+  font-size: 12px;
+}
+
+th,
+td {
+  text-align: left;
+  padding: 6px 10px;
+  border-bottom: 1px solid var(--line);
+  white-space: nowrap;
+}
+
+th {
+  color: var(--muted);
+  font-weight: 600;
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  position: sticky;
+  top: 0;
+  background: var(--panel-2);
+}
+
+tbody tr:last-child td {
+  border-bottom: 0;
+}
+
+tbody tr:hover {
+  background: rgb(255 255 255 / 3%);
+}
+
+.num {
+  font-family: var(--mono);
+  text-align: right;
+}
+
+.dim {
+  color: var(--muted);
+}
+
+.mono {
+  font-family: var(--mono);
+}
+
+button.link {
+  appearance: none;
+  background: none;
+  border: 0;
+  padding: 0;
+  color: var(--accent);
+  font: inherit;
+  cursor: pointer;
+  text-decoration: underline;
+}
+
+/* --- Badges -------------------------------------------------------------- */
+
+.badge {
+  display: inline-block;
+  border-radius: 3px;
+  padding: 1px 6px;
+  font-size: 11px;
+  border: 1px solid;
+}
+
+.badge--ready,
+.badge--good {
+  color: var(--good);
+  border-color: rgb(52 211 153 / 40%);
+}
+
+.badge--needs-review,
+.badge--warn {
+  color: var(--warn);
+  border-color: rgb(251 191 36 / 40%);
+}
+
+.badge--error,
+.badge--bad {
+  color: var(--bad);
+  border-color: rgb(248 113 113 / 40%);
+}
+
+.badge--muted {
+  color: var(--muted);
+  border-color: var(--line);
+}
+
+/* --- States -------------------------------------------------------------- */
+
+.notice {
+  border: 1px solid var(--line);
+  border-left: 2px solid var(--accent);
+  background: var(--panel);
+  border-radius: 4px;
+  padding: 10px 12px;
+  margin-bottom: 16px;
+  color: var(--muted);
+}
+
+.notice strong {
+  color: var(--text);
+}
+
+.gate {
+  min-height: 100vh;
+  display: grid;
+  place-items: center;
+  padding: 24px;
+}
+
+.gate__card {
+  max-width: 420px;
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 22px;
+}
+
+.gate__card h1 {
+  font-size: 16px;
+  margin: 0 0 8px;
+}
+
+.gate__card p {
+  color: var(--muted);
+  margin: 0 0 14px;
+}
+
+.gate__card a {
+  color: var(--accent);
+}
+
+@media (width <= 720px) {
+  .console {
+    grid-template-columns: 1fr;
+  }
+
+  .nav {
+    border-right: 0;
+    border-bottom: 1px solid var(--line);
+    flex-direction: row;
+    flex-wrap: wrap;
+    align-items: center;
+    padding: 8px;
+    gap: 4px;
+  }
+
+  .nav__brand {
+    border: 0;
+    margin: 0;
+    padding: 0 8px;
+    width: 100%;
+  }
+
+  .nav__item {
+    border-left: 0;
+    border-bottom: 2px solid transparent;
+    padding: 5px 9px;
+  }
+
+  .nav__item.is-active {
+    border-left: 0;
+    border-bottom-color: var(--accent);
+  }
+
+  .nav__spacer,
+  .nav__foot {
+    display: none;
+  }
+}

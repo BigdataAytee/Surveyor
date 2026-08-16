@@ -409,6 +409,47 @@ screen — 1500 features fitted is about 30 ms a frame, because that many SVG
 elements genuinely have to be re-projected. Zooming in fixes it, and that is
 what anyone editing such a drawing does anyway.
 
+## Annotations: the title block, the scale and free text
+
+Text on the sheet is not survey data, and the code says so structurally rather
+than by convention. The title block and free text boxes live in their own
+layer, carry no provenance beyond "a person put this here", and nothing about
+them feeds the geometry — moving a note changes no bearing, no area and no
+coordinate.
+
+They *are* positioned in survey coordinates, which is not a contradiction: an
+annotation pinned to the screen would slide across the drawing on every pan,
+and a note reading "fence in poor repair" is about a place. It travels with the
+plan; it is simply not part of it.
+
+One rule governs the whole layer, and it is written into the types: **a field
+that is present was decided by the surveyor, a field that is absent is read
+from the plan, and only absent fields may ever be filled in.** So a title block
+follows the site name until somebody types a title, and from that moment
+nothing regenerates it. "Add scale bar" is additive by construction — the patch
+it produces can turn a part on and has no way to turn one off.
+
+**The scale bar is drawn at its true on-screen length.** A bar that did not
+shrink as you zoomed out would be a measuring stick that lies, which is worse
+than no bar at all — so the smoke test measures the drawn bar against two
+survey points of known separation and fails if the two disagree by more than
+2%. `chooseScale` rounds *out* to the next standard scale, so a plan is never
+drawn larger than its sheet.
+
+**Formatting is presentation and nothing else.** `set-text-style` and
+`set-line-style` are the only way to change appearance, and neither reducer
+case can reach a coordinate, a calculated value or a provenance tag. A bold
+dimension is the same dimension.
+
+The assistant offers the heading once, when a boundary first validates, and the
+typed command and the card's buttons go through **one shared handler** — so
+they cannot drift apart. The assistant still only ever offers; the reducer is
+the only thing that writes.
+
+Related: a plan may state an area that disagrees with the computed one, which
+raises `area-mismatch` as a *question* about which figure the plan should
+state, not as a correction. The engine does not know which is right.
+
 ## Working offline
 
 A survey happens where the survey is, and that is regularly somewhere with no
@@ -515,11 +556,15 @@ The server side is in [`api/`](./api), dependency-free and built on
 
 | File | What it is |
 |---|---|
-| `api/_auth-core.mjs` | Hashing, sessions, lockout, cookies. No HTTP, no storage — the part worth testing hard |
-| `api/_auth-store-file.mjs` | A JSON-file store for development and self-hosting. Its header carries the store interface and the equivalent SQL |
-| `api/_auth-routes.mjs` | The five actions, shared verbatim by the serverless function and the local server |
-| `api/auth.js` | The Vercel function |
-| `apps/web/server/auth.mjs` | The same routes over `node:http`, for local work |
+| `api/_auth-core.mjs` | Hashing, sessions, roles, one-time links, lockout, cookies, the audit trail. No HTTP, no storage — the part worth testing hard |
+| `api/_auth-store-file.mjs` | A JSON-file store for development and self-hosting. Its header carries the whole store interface and the equivalent SQL |
+| `api/_auth-store-kv.mjs` | The same interface over Redis-and-HTTP, which is the one that works on serverless |
+| `api/_auth-routes.mjs` | Every action, shared verbatim by the serverless function and the local server |
+| `api/_mailer.mjs` | Verification and reset mail, as a webhook. No SMTP client and no mail dependency |
+| `api/_telemetry.mjs` | What the app is allowed to report, as a whitelist applied on the server |
+| `api/_admin-routes.mjs` | The console's read routes and the one route that writes |
+| `api/auth.js`, `api/admin.js` | The Vercel functions |
+| `apps/web/server/auth.mjs` | Both sets of routes over `node:http`, for local work |
 
 What it does, and why:
 
@@ -538,12 +583,79 @@ What it does, and why:
   it, and requires the current password — a session left open on an unattended
   machine must not be enough to lock its owner out.
 
+- **Sessions renew as they are used**, up to a ceiling. Opening the app pushes
+  the expiry out and hands the browser the new lifetime on the way past, so
+  nobody is signed out mid-task; a 90-day absolute cap is what keeps the
+  sliding window bounded rather than "forever, as long as you open it". This is
+  what a refresh token is for, in the shape a *server-side* session actually
+  wants: a refresh token exists because a stateless token cannot be extended,
+  and a session row can simply be given a later expiry. Two half-implemented
+  mechanisms doing one job is the usual cause of being randomly logged out.
+
+### Verification and password reset
+
+Both work by putting a one-time link in somebody's inbox, and both rest
+entirely on one property: **a token that was emailed never comes back over
+HTTP.** If it did, anyone could confirm any address and reset any password, and
+both steps would be ceremony. `smoke-verify.mjs` checks that directly — it
+captures the mail with a real HTTP server and then greps every response for
+every token that was sent.
+
+Mail is a **webhook**, not an SMTP client: the server POSTs a small JSON body to
+whatever `AUTH_MAIL_WEBHOOK` names, and that endpoint is somebody's
+transactional provider, their own relay, or a queue. An auth path is a bad
+place to take on a dependency, and every provider worth using accepts a POST.
+
+With no webhook configured the link is written to the server log and the caller
+is *told* delivery failed, rather than being shown "we sent you an email" that
+was not sent. That is also why verification defaults to being required exactly
+when mail can be delivered: switching it on with no mailer would make every new
+account permanently unusable, and the person who did it would have no account
+left to undo it with.
+
+The rest of it:
+
+- A reset **ends every session for that account**, including the attacker's —
+  a reset is what somebody does when they think another person has their
+  password, so leaving that person signed in makes it a formality.
+- A reset also **marks the address confirmed**: they received mail at it and
+  acted on it, which is the evidence verification asks for. Without this
+  someone could reset their password and still be refused at sign-in, with no
+  way out of the loop.
+- A rejected new password **does not cost you the link** — a fresh one comes
+  back with the error, so a typo is a retry rather than a trip to the inbox.
+- Verification is checked **after** the password, so "verify your email" is
+  never an answer to a wrong guess and can never be used to ask whether an
+  address has an account here.
+- `request-reset` and `resend-verification` answer **identically for every
+  address**, existing or not. Signup is the one route that says plainly the
+  address is taken, and only because it cannot do otherwise: signup cannot
+  create a duplicate, so any wording at all reveals the same thing, and a vague
+  one only costs a real person a refusal that does not say why.
+
+### Roles
+
+Two levels: `surveyor`, and `developer`/`admin` for the console.
+
+**Nothing in a request can set a role.** Not that the value is validated and
+rejected — `register` has no parameter to put one in, so no request body,
+however shaped, has anywhere to land. Roles come from `AUTH_ADMIN_EMAILS`,
+which is deployment configuration, or from an existing admin through the
+console. A test tries six shapes of the attempt and asserts all six produce a
+surveyor.
+
+Losing a role **ends that account's sessions immediately**, rather than at
+their own expiry — otherwise revocation is a request rather than a revocation.
+The last admin cannot demote themselves, because a deployment with no admin has
+no way back except editing the database by hand.
+
 Two honest limits. The file store is for development and single-host
 self-hosting; it is not safe on serverless, where instances do not share a
 disk, which is why `api/auth.js` **refuses to start** (503) rather than
 silently losing accounts when `AUTH_STORE` is not configured for a real
-database. And there is no password reset by email, because that needs a mail
-provider this repository does not have.
+database. And the audit trail is capped at a window of recent activity rather
+than kept forever — the console shows what is happening now, and anyone who
+needs a permanent record should ship the events somewhere that keeps them.
 
 Running it locally:
 
@@ -552,10 +664,85 @@ npm run auth --workspace @surveyor/web     # accounts on http://127.0.0.1:8788
 VITE_AUTH_ENDPOINT=http://127.0.0.1:8788/api/auth npm run dev --workspace @surveyor/web
 ```
 
+## The admin console
+
+A **separate surface**, at `/admin/`, with its own HTML entry, its own bundle
+and its own stylesheet. It shares no navigation, no state and no design system
+with the app, and it registers no service worker.
+
+That separation is not tidiness. Two things follow from it:
+
+- **Security.** Provenance trails and error traces across every project on a
+  deployment must never be reachable from a surveyor's account, even by
+  guessing the URL. Every route re-reads the role the *server* has stored for
+  the session; the browser is never asked. A signed-in surveyor gets a **404**,
+  not a 403 — somebody who guessed the URL should learn there is nothing at it
+  rather than that there is something worth trying harder to reach.
+- **Clarity.** The app is deliberately calm and non-technical. A monitoring
+  console is the opposite: dense tables, fixed-width numbers, timestamps. These
+  should never share screens, and a shared stylesheet is how two surfaces with
+  opposite jobs slowly become one that suits neither.
+
+It is **read-mostly**. Exactly one control changes anything — granting a role —
+and it writes an audit event naming who did it, to whom, and when. There is no
+route that edits a plan; not "no button", no route. An admin who could quietly
+alter a confirmed bearing would make every plan in the system arguable, and the
+whole provenance model rests on confirmation happening in the surveyor's hands.
+
+Views: **Overview** (pipeline health, error rates, activity), **Projects** with
+a full per-project trace, **AI suggestions** (what was offered against what was
+kept), **Errors**, **Usage** (stage timings and load), **Jurisdictions**,
+**Accounts** and **Audit**.
+
+**Jurisdiction templates are read-only, and that is a real limitation rather
+than an unfinished screen.** They are compiled into the engine, which is what
+lets a plan be traced to a reviewed version of the rules; a template editable at
+runtime would change the rules governing legal compliance under plans already
+being drawn, with no review and no version to point at. Changing one is a code
+change and a deploy, deliberately. The console reads them from the same module
+the composer draws with, so it cannot report a rule the app is not using.
+
+### What the app reports, and what it never reports
+
+The console can only show what the app tells it, and the architecture is
+explicit that reporting has to happen *where the thing happens* rather than be
+reconstructed later — reconstruction is guessing, and an audit trail that is a
+guess is worse than none because it looks like evidence. So the app posts small
+events at the moment a suggestion is offered, accepted or refused.
+
+**An event carries shapes, never contents.** A kind, a suggestion type, a
+validation code, a count, a duration, an opaque project id — and no coordinate,
+no bearing, no name, no address, and no note anybody typed. The reason is the
+console's audience: whoever can read it can read every deployment's plans at
+once, so one field that leaks a client's parcel into it leaks all of them.
+
+That is enforced twice. `state/report.ts` types the payload so adding a field at
+a call site is a compile error, and `api/_telemetry.mjs` re-checks it on the
+server as a **whitelist** — a stored event is built field by field into a fresh
+object, so a property invented by a modified client has nowhere to land rather
+than needing to be recognised and removed. A field that fails its check is
+dropped and the event still stored, because the event is evidence something
+happened and that is the part nothing can reconstruct later.
+
+Reporting never costs the app anything: batched, sent with `sendBeacon`, never
+awaited, never retried, and dropped entirely in a build with no
+`VITE_ADMIN_ENDPOINT`. A surveyor with no signal must not notice it exists.
+
+Running it locally — the same server serves both:
+
+```bash
+AUTH_ADMIN_EMAILS=you@example.com npm run auth --workspace @surveyor/web
+VITE_AUTH_ENDPOINT=http://127.0.0.1:8788/api/auth \
+  VITE_ADMIN_ENDPOINT=http://127.0.0.1:8788/api/admin \
+  npm run dev --workspace @surveyor/web
+```
+
+Register with that address and the console is at `/admin/`.
+
 ## Testing
 
 ```bash
-npm test                                    # 321 tests across contracts, engine, web and auth
+npm test                                    # 404 tests across contracts, engine, web and the API
 npm run smoke --workspace @surveyor/web     # browser flows (needs a preview server)
 ```
 
@@ -630,6 +817,47 @@ cannot be registered twice, "work without an account" opens the drawing and is
 not remembered across a reload, and a server that is down says so with a way
 past it.
 
+Verification and password reset get their own pass, because every step of them
+crosses a boundary — the server mints a token, a mail provider carries it, a
+browser arrives on a link, and a second request spends it. Unit tests can check
+each hop; only this can check they join up. It starts a **real mail server** and
+reads the link out of what was sent, which is the only honest way to get one:
+
+```bash
+cd apps/web
+VITE_AUTH_ENDPOINT=http://127.0.0.1:8790/api/auth npx vite build --outDir dist-verify
+npx vite preview --port 4180 --outDir dist-verify &
+npm run smoke:verify
+```
+
+It drives the whole round trip: registering does not sign you in, signing in
+before confirming is refused with a resend button while a *wrong password* is
+refused without one, the emailed link confirms the address and is stripped from
+the URL, the forgotten-password flow sends a link that opens a new-password
+screen, a rejected password does not cost you the link, and afterwards the old
+password is dead and the new one works. Then it re-checks the property all of
+it rests on: every token that was emailed is grepped for in every API response,
+and must appear in none of them.
+
+The admin console gets its own too, because access control is the reason it
+exists as a separate surface and access control cannot be tested without a real
+server, a real cookie jar and a real browser:
+
+```bash
+cd apps/web
+VITE_AUTH_ENDPOINT=http://127.0.0.1:8789/api/auth \
+  VITE_ADMIN_ENDPOINT=http://127.0.0.1:8789/api/admin \
+  npx vite build --outDir dist-admin
+npx vite preview --port 4179 --outDir dist-admin &
+npm run smoke:admin
+```
+
+A signed-out visitor gets nothing; a signed-in surveyor is told there is
+nothing here rather than that there is something they may not see; an admin
+gets the console, with the two sign-ups already in its audit trail and not one
+password hash anywhere in the page source; a promotion takes effect and a
+developer trying to grant a role is refused out loud rather than silently.
+
 ## Deploying
 
 [`vercel.json`](./vercel.json) configures the monorepo: Vercel installs at the
@@ -650,6 +878,12 @@ environment variables and no server. The rest are optional:
 | `AUTH_STORE` | Runtime | `kv`, or `file` for a single-host self-install. Unset, an attached Redis is used and the endpoint replies 503 if there is none. |
 | `AUTH_STORE_PATH` | Runtime | Where the file store writes, when `AUTH_STORE=file`. Single-host only. |
 | `AUTH_ORIGINS` | Runtime | Comma-separated origins allowed to sign in. Unset, same-origin only, which is what a normal deployment wants. |
+| `AUTH_ADMIN_EMAILS` | Runtime | Comma-separated addresses granted `admin` **when they register**. This is how the first administrator comes to exist; after that, admins grant roles from the console. Nothing in a request body can ever set a role. |
+| `AUTH_MAIL_WEBHOOK` | Runtime | Where verification and reset mail is POSTed as JSON. Unset, links are written to the server log and nothing is delivered — a real mode for a local run, and said out loud rather than pretended. |
+| `AUTH_MAIL_TOKEN` / `AUTH_MAIL_FROM` | Runtime | Bearer token for that endpoint, and the From address to ask for. |
+| `APP_URL` | Runtime | The origin emailed links point at. Without it, links cannot be built. |
+| `AUTH_REQUIRE_VERIFICATION` | Runtime | `1` or `0`. Unset, verification is required exactly when mail can be delivered — the only default that cannot lock everybody out of a deployment with no mailer. |
+| `VITE_ADMIN_ENDPOINT` | Build | Set to `/api/admin` to turn on reporting *and* point the console at its API. Unset, the app reports nothing at all and the console has nothing to show. |
 | `VITE_MAP_TILES` | Build | Replaces the **Streets** layer's tile URL, e.g. `https://.../{z}/{x}/{y}.png`. Unset, OpenStreetMap. |
 | `VITE_MAP_ATTRIBUTION` | Build | The credit for it. Set it whenever `VITE_MAP_TILES` is — a licence condition, not decoration. |
 | `VITE_MAP_SATELLITE_TILES` | Build | The same for the **Satellite** layer. Unset, Esri World Imagery. |

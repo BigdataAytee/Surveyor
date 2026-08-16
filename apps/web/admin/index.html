@@ -1,0 +1,26 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <!--
+      No manifest, no apple-touch-icon, no theme colour, no service worker.
+
+      This is not the app. It is a separate surface with a separate audience,
+      and it must not be installable, must not be cached for offline use, and
+      must not look like the thing a surveyor put on their home screen. A
+      console that has been quietly installed on somebody's phone is a console
+      that opens without anybody meaning to open it.
+    -->
+    <meta name="robots" content="noindex, nofollow" />
+    <link
+      rel="icon"
+      href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='4' fill='%23111827'/%3E%3Cpath d='M6 22h4v-8H6zm7 0h4V8h-4zm7 0h4v-12h-4z' fill='%2338bdf8'/%3E%3C/svg%3E"
+    />
+    <title>Surveyor — Console</title>
+  </head>
+  <body>
+    <div id="root"></div>
+    <script type="module" src="/admin/main.tsx"></script>
+  </body>
+</html>

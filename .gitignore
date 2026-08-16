@@ -1,9 +1,12 @@
 node_modules/
 dist/
+dist-admin/
 dist-auth/
 dist-classifier/
+dist-classify/
 dist-offline/
 dist-test/
+dist-verify/
 *.tsbuildinfo
 
 # Accounts kept by the local auth server. Real password hashes, even if they

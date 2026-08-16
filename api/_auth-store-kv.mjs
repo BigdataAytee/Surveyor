@@ -30,16 +30,27 @@
  *
  *   user:<id>            the user record, as JSON
  *   email:<address>      the id registered to that address — the uniqueness lock
+ *   users                a set of every user id, for the console's list
  *   session:<lookup>     the session, as JSON, expiring with the session
  *   sessions:<userId>    a set of that user's session lookups
- *   attempts:<address>   failed sign-ins and any lockout, expiring by itself
+ *   token:<lookup>       a one-time link, expiring with itself
+ *   tokens:<userId>:<p>  that user's live links for purpose `p`
+ *   attempts:<bucket>    failed attempts and any lockout, expiring by itself
+ *   events               a capped list of auth events, newest last
  *
  * `lookup` is the SHA-256 of the token, never the token. Someone who reads
- * every key in this store still cannot sign in as anybody.
+ * every key in this store still cannot sign in as anybody, and cannot click
+ * anybody's password reset link either.
  */
 
 /** Long enough to cover a lockout many times over; short enough to expire. */
 const ATTEMPT_TTL_SECONDS = 60 * 60;
+
+/** How many auth events the console can look back over. */
+const MAX_EVENTS = 5000;
+
+/** And how many telemetry events, which arrive far more often. */
+const MAX_TELEMETRY = 20000;
 
 export function createKvStore({ url, token, transport = fetch }) {
   if (!url || !token) throw new Error('The account store needs a URL and a token.');
@@ -110,12 +121,58 @@ export function createKvStore({ url, token, transport = fetch }) {
       if (claimed === null) throw new Error('That address is already registered.');
 
       await setJson(`user:${user.id}`, user);
+      // The index the console lists from. Redis has no "scan by prefix" that
+      // is safe to run on a live store, so membership is recorded as it goes.
+      await command('SADD', 'users', user.id);
     },
 
     async updatePassword(id, passwordHash, changedAt) {
       const user = await this.findById(id);
       if (!user) return;
       await setJson(`user:${id}`, { ...user, passwordHash, passwordChangedAt: changedAt });
+    },
+
+    async touchLogin(id, at) {
+      const user = await this.findById(id);
+      if (!user) return;
+      await setJson(`user:${id}`, { ...user, lastLoginAt: at });
+    },
+
+    async setEmailVerified(id, verified) {
+      const user = await this.findById(id);
+      if (!user) return;
+      await setJson(`user:${id}`, { ...user, emailVerified: verified === true });
+    },
+
+    async setRole(id, role) {
+      const user = await this.findById(id);
+      if (!user) return;
+      await setJson(`user:${id}`, { ...user, role });
+    },
+
+    async countByRole(role) {
+      const ids = await command('SMEMBERS', 'users');
+      let total = 0;
+      for (const id of Array.isArray(ids) ? ids : []) {
+        const user = await getJson(`user:${id}`);
+        if (user && (user.role ?? 'surveyor') === role) total += 1;
+      }
+      return total;
+    },
+
+    async listUsers({ limit = 200, query = '' } = {}) {
+      const needle = String(query).trim().toLowerCase();
+      const ids = await command('SMEMBERS', 'users');
+      const out = [];
+      for (const id of Array.isArray(ids) ? ids : []) {
+        if (out.length >= limit) break;
+        const user = await getJson(`user:${id}`);
+        if (!user) continue;
+        if (needle !== '' && !String(user.email).includes(needle)) continue;
+        const { passwordHash: _hash, ...rest } = user;
+        out.push(rest);
+      }
+      return out;
     },
 
     async createSession(session) {
@@ -132,6 +189,16 @@ export function createKvStore({ url, token, transport = fetch }) {
 
     async findSession(lookup) {
       return getJson(`session:${lookup}`);
+    },
+
+    async renewSession(lookup, expiresAt) {
+      const session = await getJson(`session:${lookup}`);
+      if (!session) return;
+      const seconds = Math.max(1, Math.ceil((expiresAt - Date.now()) / 1000));
+      await setJson(`session:${lookup}`, { ...session, expiresAt }, 'EX', seconds);
+      // The index has to be pushed out too, or "sign out everywhere" stops
+      // finding sessions that are still perfectly valid.
+      await command('EXPIRE', `sessions:${session.userId}`, seconds);
     },
 
     async deleteSession(lookup) {
@@ -157,8 +224,35 @@ export function createKvStore({ url, token, transport = fetch }) {
      * would need a Lua script or a transaction, which buys nothing an attacker
      * can use — they still cannot get more than a handful of tries.
      */
-    async recordFailure(email, now, windowMs) {
-      const key = `attempts:${email}`;
+    async createToken(token) {
+      const seconds = Math.max(1, Math.ceil((token.expiresAt - Date.now()) / 1000));
+      await setJson(`token:${token.lookup}`, token, 'EX', seconds);
+      const index = `tokens:${token.userId}:${token.purpose}`;
+      await command('SADD', index, token.lookup);
+      await command('EXPIRE', index, seconds);
+    },
+
+    async findToken(lookup) {
+      return getJson(`token:${lookup}`);
+    },
+
+    async deleteToken(lookup) {
+      const token = await getJson(`token:${lookup}`);
+      await command('DEL', `token:${lookup}`);
+      if (token) await command('SREM', `tokens:${token.userId}:${token.purpose}`, lookup);
+    },
+
+    async deleteTokensFor(userId, purpose) {
+      const index = `tokens:${userId}:${purpose}`;
+      const members = await command('SMEMBERS', index);
+      for (const lookup of Array.isArray(members) ? members : []) {
+        await command('DEL', `token:${lookup}`);
+      }
+      await command('DEL', index);
+    },
+
+    async countAttempt(bucket, now, windowMs) {
+      const key = `attempts:${bucket}`;
       const record = (await getJson(key)) ?? { failures: [], lockedUntil: 0 };
       const failures = [
         ...record.failures.filter((at) => now - at < windowMs),
@@ -168,20 +262,98 @@ export function createKvStore({ url, token, transport = fetch }) {
       return failures.length;
     },
 
-    async clearFailures(email) {
-      await command('DEL', `attempts:${email}`);
+    async clearAttempts(bucket) {
+      await command('DEL', `attempts:${bucket}`);
     },
 
-    async getLockout(email) {
-      const record = await getJson(`attempts:${email}`);
+    async getLockout(bucket) {
+      const record = await getJson(`attempts:${bucket}`);
       const until = record?.lockedUntil ?? 0;
       return until > 0 ? { until } : null;
     },
 
-    async setLockout(email, until) {
-      const key = `attempts:${email}`;
+    async setLockout(bucket, until) {
+      const key = `attempts:${bucket}`;
       const record = (await getJson(key)) ?? { failures: [], lockedUntil: 0 };
       await setJson(key, { ...record, lockedUntil: until }, 'EX', ATTEMPT_TTL_SECONDS);
+    },
+
+    /*
+     * Events go in a list, trimmed on write.
+     *
+     * `LPUSH` + `LTRIM` is the one shape Redis makes cheap and bounded: the
+     * newest is at the head, the tail falls off, and nothing has to scan. The
+     * alternative — a key per event and a scan to read them — is the thing
+     * that quietly stops working once there are a lot of them.
+     */
+    async recordEvent(event) {
+      await command('LPUSH', 'events', JSON.stringify(event));
+      await command('LTRIM', 'events', 0, MAX_EVENTS - 1);
+    },
+
+    async listEvents({ limit = 200, kinds = null, since = null, userId = null } = {}) {
+      /*
+       * Read more rows than asked for, then filter.
+       *
+       * The filters are applied here rather than in Redis because a list has
+       * no index to apply them with. Reading a bounded multiple keeps a narrow
+       * filter — "role changes only" — from coming back empty merely because
+       * the newest `limit` rows happened to be sign-ins.
+       */
+      const raw = await command('LRANGE', 'events', 0, Math.min(MAX_EVENTS, limit * 10) - 1);
+      const out = [];
+      for (const item of Array.isArray(raw) ? raw : []) {
+        if (out.length >= limit) break;
+        let event;
+        try {
+          event = typeof item === 'string' ? JSON.parse(item) : item;
+        } catch {
+          continue;
+        }
+        if (!event) continue;
+        if (kinds !== null && !kinds.includes(event.kind)) continue;
+        if (since !== null && Date.parse(event.at) < since) continue;
+        if (userId !== null && event.userId !== userId) continue;
+        out.push(event);
+      }
+      return out;
+    },
+
+    /*
+     * Telemetry, in its own list.
+     *
+     * Separate from the audit trail because they answer different questions
+     * and deserve different retention: one is who did what to which account,
+     * the other is how the pipeline and the assistant are behaving.
+     */
+    async recordTelemetry(event) {
+      await command('LPUSH', 'telemetry', JSON.stringify(event));
+      await command('LTRIM', 'telemetry', 0, MAX_TELEMETRY - 1);
+    },
+
+    async listTelemetry({ limit = 500, kinds = null, since = null, projectId = null } = {}) {
+      const raw = await command(
+        'LRANGE',
+        'telemetry',
+        0,
+        Math.min(MAX_TELEMETRY, limit * 10) - 1,
+      );
+      const out = [];
+      for (const item of Array.isArray(raw) ? raw : []) {
+        if (out.length >= limit) break;
+        let event;
+        try {
+          event = typeof item === 'string' ? JSON.parse(item) : item;
+        } catch {
+          continue;
+        }
+        if (!event) continue;
+        if (kinds !== null && !kinds.includes(event.kind)) continue;
+        if (since !== null && Date.parse(event.at) < since) continue;
+        if (projectId !== null && event.projectId !== projectId) continue;
+        out.push(event);
+      }
+      return out;
     },
   };
 }

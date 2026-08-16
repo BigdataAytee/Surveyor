@@ -28,6 +28,24 @@
   color: var(--ink-secondary);
 }
 
+/* A link out of the app — today, only the one into the console. */
+.panel__link {
+  color: var(--accent);
+  font-weight: var(--weight-semibold);
+  text-decoration: none;
+}
+
+.panel__link:hover,
+.panel__link:focus-visible {
+  text-decoration: underline;
+}
+
+.panel__hint {
+  display: block;
+  margin-top: var(--space-1);
+  color: var(--ink-tertiary);
+}
+
 .panel__value {
   font-size: var(--text-body);
   font-weight: var(--weight-medium);

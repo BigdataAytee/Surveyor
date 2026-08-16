@@ -175,6 +175,18 @@ self.addEventListener('fetch', (event) => {
    * down.
    */
   if (request.mode === 'navigate') {
+    /*
+     * The admin console is not this app, and must not be served its shell.
+     *
+     * Two reasons, and both are the kind that only show up in production.
+     * Serving `index.html` for `/admin` would open the drawing app at the
+     * console's URL, which looks like the console failing to load. And a
+     * cached console would show figures from whenever it was last online with
+     * nothing to say they are stale — worse than a page that will not open,
+     * because a monitoring surface that lies is one people act on.
+     */
+    if (new URL(request.url).pathname.startsWith('/admin')) return;
+
     event.respondWith(
       (async () => {
         const cached = await caches.match('/index.html', MATCH);

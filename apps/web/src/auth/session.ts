@@ -15,11 +15,28 @@
 
 import { connectedFetch } from '../state/connectivity.js';
 
+export type Role = 'surveyor' | 'developer' | 'admin';
+
 export interface Account {
   readonly id: string;
   readonly email: string;
   readonly name: string | null;
+  /**
+   * What the server says this account is.
+   *
+   * Shown, and used to decide whether to offer the console — and that is all
+   * it is for. It is not a permission: the server re-reads its own copy on
+   * every admin request, so editing this in a debugger changes what the menu
+   * looks like and nothing else.
+   */
+  readonly role: Role;
+  readonly emailVerified: boolean;
   readonly createdAt: string;
+  readonly lastLoginAt: string | null;
+}
+
+export function isAdmin(account: Account | null): boolean {
+  return account?.role === 'admin' || account?.role === 'developer';
 }
 
 export type AuthState =
@@ -127,7 +144,25 @@ export async function whoAmI(): Promise<AuthState> {
 
 export type AuthResult =
   | { readonly ok: true; readonly account: Account }
-  | { readonly ok: false; readonly error: string };
+  /**
+   * Registered, and not signed in — the deployment wants the address
+   * confirmed first. Its own outcome rather than an error, because nothing
+   * went wrong and the next step is in an inbox rather than on this screen.
+   */
+  | { readonly ok: true; readonly awaitingVerification: true; readonly message: string }
+  | {
+      readonly ok: false;
+      readonly error: string;
+      /**
+       * Only set for states the screen can offer something about.
+       *
+       * `unverified` gets a resend button. A wrong password gets nothing,
+       * because there is nothing to offer — and a code distinguishing it from
+       * an unknown address would hand a guesser the thing the single generic
+       * message exists to withhold.
+       */
+      readonly reason?: 'unverified';
+    };
 
 export async function signIn(
   email: string,
@@ -149,9 +184,21 @@ export async function createAccount(
 async function submit(action: string, body: unknown): Promise<AuthResult> {
   try {
     const { status, data } = await call(action, { body });
-    if (status >= 200 && status < 300 && data.user) {
-      return { ok: true, account: data.user as Account };
+
+    if (status >= 200 && status < 300) {
+      if (data.verificationRequired === true) {
+        return {
+          ok: true,
+          awaitingVerification: true,
+          message:
+            typeof data.message === 'string'
+              ? data.message
+              : 'Check your email for a link to confirm your address.',
+        };
+      }
+      if (data.user) return { ok: true, account: data.user as Account };
     }
+
     return {
       ok: false,
       // The server's wording is used as-is: it is written to be read by the
@@ -161,10 +208,101 @@ async function submit(action: string, body: unknown): Promise<AuthResult> {
         typeof data.error === 'string' && data.error.length > 0
           ? data.error
           : 'That did not work. Try again.',
+      ...(data.reason === 'unverified' ? { reason: 'unverified' as const } : {}),
     };
   } catch {
     return { ok: false, error: 'Could not reach the accounts service. Check your connection.' };
   }
+}
+
+/**
+ * The three routes that speak through somebody's inbox.
+ *
+ * All of them answer the same way whatever the address is, on purpose, so none
+ * of them can be used to ask who has an account here. The message they return
+ * is the server's own and is deliberately conditional — "if an account
+ * exists…" — because that is the only wording that is true in both cases.
+ */
+export async function resendVerification(email: string): Promise<string> {
+  return say('resend-verification', { email }, 'If that address needs confirming, we have sent the link again.');
+}
+
+export async function requestPasswordReset(email: string): Promise<string> {
+  return say('request-reset', { email }, 'If an account exists for that address, a reset link is on its way.');
+}
+
+async function say(action: string, body: unknown, fallback: string): Promise<string> {
+  try {
+    const { data } = await call(action, { body });
+    return typeof data.message === 'string' ? data.message : fallback;
+  } catch {
+    return 'Could not reach the accounts service. Check your connection.';
+  }
+}
+
+export type LinkResult =
+  | { readonly ok: true; readonly message: string }
+  /** A link that failed but can be retried, with the replacement to retry with. */
+  | { readonly ok: false; readonly error: string; readonly token?: string };
+
+/** Confirm an address from the link in an email. */
+export async function confirmEmail(token: string): Promise<LinkResult> {
+  try {
+    const { status, data } = await call('verify', { body: { token } });
+    if (status >= 200 && status < 300) {
+      return { ok: true, message: 'Your email address is confirmed. Sign in to continue.' };
+    }
+    return { ok: false, error: typeof data.error === 'string' ? data.error : 'That link is not valid.' };
+  } catch {
+    return { ok: false, error: 'Could not reach the accounts service. Check your connection.' };
+  }
+}
+
+/** Set a new password from the link in an email. */
+export async function resetPassword(token: string, password: string): Promise<LinkResult> {
+  try {
+    const { status, data } = await call('reset', { body: { token, password } });
+    if (status >= 200 && status < 300) {
+      return {
+        ok: true,
+        message:
+          typeof data.message === 'string'
+            ? data.message
+            : 'Your password has been changed. Sign in with it.',
+      };
+    }
+    return {
+      ok: false,
+      error: typeof data.error === 'string' ? data.error : 'That did not work.',
+      // A rejected password gets the link back, so a typo does not send
+      // someone to their inbox for another one.
+      ...(typeof data.token === 'string' ? { token: data.token } : {}),
+    };
+  } catch {
+    return { ok: false, error: 'Could not reach the accounts service. Check your connection.' };
+  }
+}
+
+/**
+ * A link somebody arrived on, taken out of the address bar.
+ *
+ * Removed from the URL as soon as it is read. A one-time token sitting in
+ * `location.href` ends up in browser history, in a shared screenshot, and in
+ * the `Referer` header of the next request the page makes.
+ */
+export function linkFromUrl(): { readonly kind: 'verify' | 'reset'; readonly token: string } | null {
+  if (typeof window === 'undefined') return null;
+
+  const url = new URL(window.location.href);
+  for (const kind of ['verify', 'reset'] as const) {
+    const token = url.searchParams.get(kind);
+    if (token) {
+      url.searchParams.delete(kind);
+      window.history.replaceState({}, '', url.toString());
+      return { kind, token };
+    }
+  }
+  return null;
 }
 
 export async function signOut(): Promise<void> {

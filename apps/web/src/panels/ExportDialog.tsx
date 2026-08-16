@@ -20,6 +20,7 @@ import {
 import { Button, Card, LoadingState, ProgressStepper, type Step } from '../ui/primitives.js';
 import { FadeIn, ScaleIn } from '../ui/motion.js';
 import { useProject } from '../state/store.js';
+import { report } from '../state/report.js';
 import './panels.css';
 
 const STEP_LABELS: readonly { readonly id: string; readonly label: string }[] = [
@@ -203,12 +204,31 @@ function ReadyToExport({
   const download = useCallback(
     (format: 'pdf' | 'dxf' | 'svg') => {
       const name = address.replace(/[^a-z0-9]+/gi, '-').toLowerCase();
-      const blob =
-        format === 'pdf'
-          ? new Blob([planToPdf(plan) as BlobPart], { type: 'application/pdf' })
-          : format === 'dxf'
-            ? new Blob([planToDxf(plan)], { type: 'application/dxf' })
-            : new Blob([svg], { type: 'image/svg+xml' });
+
+      /*
+       * Wrapped, so that a generator throwing is reported rather than only
+       * appearing as a button that did nothing.
+       *
+       * The reason is the *name* of the failure, never the message: a message
+       * from a PDF writer can carry a font path, a filename, and through the
+       * filename the site address — which is exactly what a console showing
+       * every project at once must not accumulate.
+       */
+      let blob: Blob;
+      try {
+        blob =
+          format === 'pdf'
+            ? new Blob([planToPdf(plan) as BlobPart], { type: 'application/pdf' })
+            : format === 'dxf'
+              ? new Blob([planToDxf(plan)], { type: 'application/dxf' })
+              : new Blob([svg], { type: 'image/svg+xml' });
+      } catch (error) {
+        report('export-failed', null, {
+          format,
+          reason: error instanceof Error ? error.name : 'unknown',
+        });
+        throw error;
+      }
 
       const url = URL.createObjectURL(blob);
       const link = document.createElement('a');
@@ -216,6 +236,8 @@ function ReadyToExport({
       link.download = `${name}.${format}`;
       link.click();
       URL.revokeObjectURL(url);
+
+      report('export', null, { format });
     },
     [address, plan, svg],
   );

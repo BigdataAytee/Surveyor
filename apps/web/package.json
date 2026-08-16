@@ -16,7 +16,10 @@
     "build:auth": "vite build --outDir dist-auth",
     "smoke:auth": "node scripts/smoke-auth.mjs",
     "build:offline": "vite build --outDir dist-offline",
-    "smoke:offline": "node scripts/smoke-offline.mjs"
+    "smoke:offline": "node scripts/smoke-offline.mjs",
+    "smoke:admin": "node scripts/smoke-admin.mjs",
+    "smoke:verify": "node scripts/smoke-verify.mjs",
+    "build:admin": "vite build --outDir dist-admin"
   },
   "dependencies": {
     "@surveyor/contracts": "0.1.0",

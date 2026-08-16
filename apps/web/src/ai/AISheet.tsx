@@ -34,6 +34,7 @@ import {
 import { titleScaleIntent, titleScaleOffer } from './assistant.js';
 import { createPlanner } from './planner.js';
 import { annotationAnchor, makeTitleBlock, withParts } from '../state/annotations.js';
+import { report } from '../state/report.js';
 import { ExtractionCard } from './ExtractionCard.js';
 import { extractEndpoint, prepareNote, transcribeNote } from './vision.js';
 import { dismissNote, noteText, queueNote, transcribedNotes } from './queued-notes.js';
@@ -110,6 +111,17 @@ export function AISheet({ onOpenPanel, onSelectTool }: AISheetProps) {
     if (state.model.titleBlock) return;
 
     offered.current = true;
+
+    /*
+     * Reported as offered here, where it is offered.
+     *
+     * The console's acceptance rate is only meaningful if the denominator is
+     * counted at the moment the card appears — counting it later, from what
+     * ended up on plans, would only ever be able to report acceptances.
+     */
+    for (const suggestion of ['title', 'representative-fraction', 'scale-bar'] as const) {
+      report('suggestion-offered', state.projectId, { suggestion });
+    }
 
     const { min, max } = pipeline.drawing.bounds;
     push(
@@ -524,6 +536,19 @@ export function AISheet({ onOpenPanel, onSelectTool }: AISheetProps) {
               },
             ),
           });
+        }
+
+        // Only the parts actually asked for. "Add scale bar" is not an
+        // acceptance of the title, and counting it as one would make every
+        // rate on the console read high.
+        if (parts.title) report('suggestion-accepted', state.projectId, { suggestion: 'title' });
+        if (parts.representativeFraction) {
+          report('suggestion-accepted', state.projectId, {
+            suggestion: 'representative-fraction',
+          });
+        }
+        if (parts.scaleBar) {
+          report('suggestion-accepted', state.projectId, { suggestion: 'scale-bar' });
         }
 
         push({

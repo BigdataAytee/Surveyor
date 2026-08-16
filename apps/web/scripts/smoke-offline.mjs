@@ -8,9 +8,13 @@
  * unit tests cover the decisions; this covers whether the browser does what
  * those decisions assume.
  *
- * Usage:
- *   npm run build --workspace @surveyor/web
- *   npx vite preview --port 4173 &
+ * Usage — note the endpoint, which is not optional. Half of this run is about
+ * a photograph waiting for signal, and a build with no extract endpoint has
+ * nothing to wait for: it refuses the photo up front and the queue checks all
+ * fail together, which reads like a broken queue rather than a wrong build.
+ *
+ *   VITE_EXTRACT_ENDPOINT=/__extract npx vite build --outDir dist-offline
+ *   npx vite preview --port 4173 --outDir dist-offline &
  *   npm run smoke:offline --workspace @surveyor/web
  */
 

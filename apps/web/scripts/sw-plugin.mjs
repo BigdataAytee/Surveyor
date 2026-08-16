@@ -31,6 +31,15 @@ function shouldPrecache(path) {
   if (path === 'sw.js') return false;
   // Source maps are for debugging, not for a phone in a field.
   if (path.endsWith('.map')) return false;
+  /*
+   * The admin console is deliberately not cached.
+   *
+   * It is a monitoring surface, and a cached one shows whatever it saw last
+   * time it had a connection with nothing to say the figures are stale. A
+   * console that lies quietly is worse than one that will not open — and it
+   * has no business taking up room on a surveyor's phone either.
+   */
+  if (path === 'admin/index.html' || path.startsWith('admin/')) return false;
   return /\.(html|css|js|woff2?|svg|png|webmanifest)$/.test(path);
 }
 

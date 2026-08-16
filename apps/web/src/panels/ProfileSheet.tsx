@@ -16,7 +16,7 @@ import { useState } from 'react';
 
 import { Button, Card, Field, TextInput } from '../ui/primitives.js';
 import { useAuth } from '../auth/AuthGate.js';
-import { accountsEnabled, changePassword } from '../auth/session.js';
+import { accountsEnabled, changePassword, isAdmin } from '../auth/session.js';
 import { useProject } from '../state/store.js';
 import {
   loadPreferences,
@@ -116,6 +116,27 @@ export function ProfileSheet({ onClose }: { readonly onClose: () => void }) {
               Log out
             </Button>
           </div>
+
+          {/*
+            The way into the console, for the people it is for.
+
+            A plain link out to a separate page, not a tab in here — the
+            console is a different surface with a different audience, and one
+            of the two reasons it is separate is that a surveyor should never
+            come across it. Hiding it is a courtesy either way: the server
+            answers a surveyor's request with a 404 whether or not this link
+            was ever drawn.
+          */}
+          {isAdmin(auth.account) ? (
+            <p className="panel__body">
+              <a href="/admin/" className="panel__link">
+                Open the monitoring console →
+              </a>{' '}
+              <span className="panel__hint">
+                Signed in as {auth.account.role}. Console sessions are shorter than this one.
+              </span>
+            </p>
+          ) : null}
         </Card>
       ) : (
         <Card tone="sunken">

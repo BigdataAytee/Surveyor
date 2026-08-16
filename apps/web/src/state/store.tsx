@@ -18,6 +18,7 @@ import {
   useEffect,
   useMemo,
   useReducer,
+  useRef,
   type Dispatch,
   type ReactNode,
 } from 'react';
@@ -64,6 +65,7 @@ import {
 } from './library.js';
 import { SAMPLE_PROJECT } from './sample.js';
 import { launchedAfterErase } from './preferences.js';
+import { report, type SuggestionType } from './report.js';
 
 // ---------------------------------------------------------------------------
 // Suggestions
@@ -92,6 +94,24 @@ export type Suggestion =
       readonly summary: string;
       readonly note: SurveyNote;
     };
+
+/**
+ * What kind of thing was proposed, for the acceptance figures.
+ *
+ * A type, never a summary. The summary is prose describing somebody's parcel
+ * — "a 6m × 4m garage on the east boundary" — and prose is exactly what must
+ * not reach a console that shows every project at once.
+ */
+export function suggestionType(suggestion: Suggestion): SuggestionType {
+  switch (suggestion.kind) {
+    case 'feature':
+      return 'building';
+    case 'label':
+      return 'label-placement';
+    case 'note':
+      return 'note';
+  }
+}
 
 export interface ProjectState {
   /** Which saved project this is. Every autosave writes to it. */
@@ -1134,12 +1154,74 @@ interface Store {
 const StoreContext = createContext<Store | null>(null);
 
 export function ProjectProvider({ children }: { readonly children: ReactNode }) {
-  const [state, dispatch] = useReducer(reducer, undefined, initialState);
+  const [state, rawDispatch] = useReducer(reducer, undefined, initialState);
+
+  /*
+   * Reporting sits around dispatch, not inside the reducer.
+   *
+   * The reducer has to stay pure — React invokes it twice in development to
+   * prove that it is, and a side effect in there would report everything
+   * twice. Around dispatch it fires once per action, which is once per thing
+   * a person actually did.
+   *
+   * Only the two moments the Admin Console architecture asks for: a
+   * suggestion accepted and a suggestion refused. Both carry the *type* of
+   * suggestion and nothing about the plan.
+   */
+  const projectRef = useRef(state.projectId);
+  projectRef.current = state.projectId;
+  const suggestionsRef = useRef(state.suggestions);
+  suggestionsRef.current = state.suggestions;
+
+  const dispatch = useCallback<Dispatch<Action>>((action) => {
+    if (action.type === 'suggest') {
+      report('suggestion-offered', projectRef.current, {
+        suggestion: suggestionType(action.suggestion),
+      });
+    }
+
+    if (action.type === 'accept-suggestion' || action.type === 'dismiss-suggestion') {
+      // Read before the reducer removes it — afterwards there is nothing left
+      // to say what kind it was, which is exactly the reconstruction problem
+      // the architecture says not to leave until later.
+      const suggestion = suggestionsRef.current.find((candidate) => candidate.id === action.id);
+      if (suggestion) {
+        report(
+          action.type === 'accept-suggestion' ? 'suggestion-accepted' : 'suggestion-rejected',
+          projectRef.current,
+          { suggestion: suggestionType(suggestion) },
+        );
+      }
+    }
+    rawDispatch(action);
+  }, []);
 
   // Deriving rather than storing is what keeps the canvas, the validation
   // state, and any export in agreement. The model is small enough that
   // re-running the pipeline per edit is comfortably inside a frame.
   const pipeline = useMemo(() => runPipeline(state.model), [state.model]);
+
+  /*
+   * One validation event per outcome, not per keystroke.
+   *
+   * The pipeline re-runs on every edit, and reporting each run would make the
+   * console's error rates a measure of how much someone typed. The status and
+   * the set of codes is what changes when something actually changed.
+   */
+  const lastValidation = useRef<string | null>(null);
+  useEffect(() => {
+    if (!pipeline.ok) return;
+    const codes = [...new Set(pipeline.validation.issues.map((issue) => issue.code))].sort();
+    const fingerprint = `${pipeline.validation.status}:${codes.join(',')}`;
+    if (fingerprint === lastValidation.current) return;
+    lastValidation.current = fingerprint;
+
+    report('validation', state.projectId, {
+      status: pipeline.validation.status,
+      codes,
+      points: state.model.points.length,
+    });
+  }, [pipeline, state.projectId, state.model.points.length]);
 
   useEffect(() => {
     /*

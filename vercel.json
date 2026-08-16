@@ -5,9 +5,20 @@
   "framework": "vite",
   "build": {
     "env": {
-      "VITE_AUTH_ENDPOINT": "/api/auth"
+      "VITE_AUTH_ENDPOINT": "/api/auth",
+      "VITE_ADMIN_ENDPOINT": "/api/admin"
     }
   },
+  "rewrites": [
+    {
+      "source": "/admin",
+      "destination": "/admin/index.html"
+    },
+    {
+      "source": "/admin/",
+      "destination": "/admin/index.html"
+    }
+  ],
   "headers": [
     {
       "source": "/assets/(.*)",
@@ -24,6 +35,19 @@
         {
           "key": "cache-control",
           "value": "no-cache"
+        }
+      ]
+    },
+    {
+      "source": "/admin/(.*)",
+      "headers": [
+        {
+          "key": "cache-control",
+          "value": "no-store"
+        },
+        {
+          "key": "x-robots-tag",
+          "value": "noindex, nofollow"
         }
       ]
     }

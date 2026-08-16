@@ -16,8 +16,13 @@ import test from 'node:test';
 
 import {
   MIN_PASSWORD_LENGTH,
+  SESSION_ABSOLUTE_TTL_MS,
+  SESSION_ADMIN_TTL_MS,
   SESSION_SHORT_TTL_MS,
+  beginPasswordReset,
+  beginVerification,
   changePassword,
+  completePasswordReset,
   emailProblem,
   hashPassword,
   hashToken,
@@ -27,8 +32,12 @@ import {
   originAllowed,
   passwordProblem,
   register,
+  requireAdmin,
+  resolveSession,
   sessionCookie,
   sessionUser,
+  setRole,
+  verifyEmail,
   verifyPassword,
 } from './_auth-core.mjs';
 import { createFileStore } from './_auth-store-file.mjs';
@@ -124,15 +133,44 @@ test('registering then signing in works, and is case-insensitive', async () => {
   assert.ok(session.token.length >= 32);
 });
 
-test('a second registration for one address is refused without confirming it exists', async () => {
+test('a second registration for one address says so, and says where to go', async () => {
   const db = store();
   await register(db, { email: 'a@example.com', password: GOOD });
   const again = await register(db, { email: 'A@Example.com', password: GOOD });
 
   assert.equal(again.ok, false);
-  // The wording must not confirm that the address is registered — this
-  // endpoint is otherwise a way to ask who has an account.
-  assert.doesNotMatch(again.error, /already registered|taken|exists/i);
+  /*
+   * This one route tells the truth about an address, and the reason is
+   * arithmetic rather than principle: signup cannot create a duplicate, so
+   * *any* wording — including a deliberately vague one — tells the sender
+   * whether the address was free. The vagueness buys nothing and costs a real
+   * person, who typed their own address, a refusal that does not say why.
+   *
+   * Different capitals, same account. Someone who registered with a capital
+   * and signs in without one must not end up with two.
+   */
+  assert.match(again.error, /already exists/i);
+  assert.match(again.error, /sign in/i);
+});
+
+test('the routes where enumeration matters keep the defence', async () => {
+  const db = store();
+  await register(db, { email: 'a@example.com', password: GOOD });
+
+  // Sign-in: one answer for a wrong password and for no such account.
+  const wrong = await login(db, { email: 'a@example.com', password: 'wrong horse xyz' });
+  const absent = await login(db, { email: 'nobody@example.com', password: GOOD });
+  assert.equal(wrong.error, absent.error);
+  assert.equal(wrong.status, absent.status);
+
+  // Password reset: the *result* differs inside the server, and nothing that
+  // reaches the caller does. That is what makes the difference unobservable.
+  const known = await beginPasswordReset(db, 'a@example.com');
+  const unknown = await beginPasswordReset(db, 'nobody@example.com');
+  assert.equal(known.ok, unknown.ok);
+  assert.equal(known.status ?? 200, unknown.status ?? 200);
+  assert.ok(known.token, 'a real address produced no reset token');
+  assert.equal(unknown.token, null, 'an unknown address produced a token');
 });
 
 test('a wrong password and an unknown address give the same answer', async () => {
@@ -193,7 +231,7 @@ test('repeated failures lock the account, and a success clears the count', async
 
   // Once the lockout expires, the correct password works again.
   const later = Date.now() + 16 * 60 * 1000;
-  const after = await login(db, { email: 'a@example.com', password: GOOD }, later);
+  const after = await login(db, { email: 'a@example.com', password: GOOD }, { now: later });
   assert.equal(after.ok, true);
 });
 
