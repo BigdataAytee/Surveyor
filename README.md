@@ -412,10 +412,33 @@ what anyone editing such a drawing does anyway.
 ## Annotations: the title block, the scale and free text
 
 Text on the sheet is not survey data, and the code says so structurally rather
-than by convention. The title block and free text boxes live in their own
-layer, carry no provenance beyond "a person put this here", and nothing about
-them feeds the geometry — moving a note changes no bearing, no area and no
+than by convention. The heading and free text boxes live in their own layer,
+carry no provenance beyond "a person put this here", and nothing about them
+feeds the geometry — moving a note changes no bearing, no area and no
 coordinate.
+
+**The heading is laid out the way a lodged survey plan lays it out**: centred
+*above* the drawing, as separate underlined lines — title, scale, scale bar,
+`ORIGIN:-`, `AREA:-` — with no box around any of it. That is modelled on a
+real Nigerian plan rather than on a CAD tool's title block, and it is not a
+style preference: a plan's heading is a series of distinct claims, each
+underlined so a reader can check them one at a time, and the underline is what
+separates them where there is no box to. Origin and area are on by default,
+because a plan that does not state the origin its bearings were measured from
+cannot be re-established on the ground.
+
+Each line is **its own object** — separately shown, moved, tapped and deleted.
+Tapping the scale bar selects the scale bar; dragging it moves only it;
+deleting it hides that line rather than the heading. Lines that have not been
+moved stack automatically, so a heading nobody has rearranged stays tidy, and
+"Line them back up" puts a rearranged one back.
+
+The heading grows **upward** from its anchor, and that detail is load-bearing:
+its height is text, so it is pixels, while its clearance from the drawing is
+ground. Stacking downward meant the clearance shrank as you zoomed out while
+the heading did not, and the `AREA:-` line ended up written across a boundary
+dimension. Pinning its bottom to the anchor makes it impossible at any zoom,
+which the smoke run checks at three of them.
 
 They *are* positioned in survey coordinates, which is not a contradiction: an
 annotation pinned to the screen would slide across the drawing on every pan,

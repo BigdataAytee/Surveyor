@@ -59,8 +59,17 @@ export function PropertiesSheet({
    * identifies them.
    */
   const selected = state.selectedId;
-  if (selected && state.model.titleBlock?.id === selected) {
-    return <TitleBlockProperties block={state.model.titleBlock} onClose={onClose} />;
+  /*
+   * Any part of the heading opens the heading's own panel.
+   *
+   * The parts are separate objects on the drawing — separately shown, moved
+   * and tapped — but they are one thing to *edit*: which lines appear, what
+   * the title says, which scale it states. Splitting the panel per part would
+   * make "turn the scale bar on" a place you have to already be.
+   */
+  const block = state.model.titleBlock;
+  if (selected && block && (block.id === selected || selected.startsWith(`${block.id}:`))) {
+    return <TitleBlockProperties block={block} onClose={onClose} />;
   }
   const textBox = (state.model.textBoxes ?? []).find((box) => box.id === selected);
   if (textBox) return <TextBoxProperties box={textBox} onClose={onClose} />;
@@ -446,20 +455,32 @@ function TitleBlockProperties({
         </select>
       </Field>
 
-      <Field label="Show">
+      <Field
+        label="Show"
+        hint="Each line is its own object on the drawing — tap one to move it."
+        explanation={
+          'A plan states these as separate underlined lines above the drawing, ' +
+          'not inside a box: the title, the scale, the origin and the area are ' +
+          'four different claims, and a reader checks them one at a time. ' +
+          'Origin and area are on by default because a plan without them cannot ' +
+          'be re-established on the ground.'
+        }
+      >
         <div className="format__row">
           {(
             [
               ['showTitle', 'Title'],
               ['showRepresentativeFraction', 'Scale as 1:N'],
               ['showScaleBar', 'Scale bar'],
+              ['showOrigin', 'Origin'],
+              ['showArea', 'Area'],
             ] as const
           ).map(([key, label]) => (
             <Button
               key={key}
               size="sm"
               variant={block[key] ? 'primary' : 'secondary'}
-              aria-pressed={block[key]}
+              aria-pressed={block[key] ?? false}
               onClick={() => patch({ [key]: !block[key] })}
             >
               {label}
@@ -467,6 +488,17 @@ function TitleBlockProperties({
           ))}
         </div>
       </Field>
+
+      {block.offsets && Object.keys(block.offsets).length > 0 ? (
+        <Field label="Layout" hint="One or more lines have been moved from where they started.">
+          <Button
+            size="sm"
+            onClick={() => patch({ offsets: undefined })}
+          >
+            Line them back up
+          </Button>
+        </Field>
+      ) : null}
 
       <TextFormatToolbar id={block.id} style={block.style} />
 

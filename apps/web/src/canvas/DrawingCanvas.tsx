@@ -25,6 +25,7 @@ import type {
   FreeTextBox,
   PlacedLabel,
   SiteFeature,
+  TitleBlockPart,
   TitleScaleBlock,
 } from '@surveyor/contracts';
 import {
@@ -113,6 +114,10 @@ export interface CanvasProps {
     readonly title: string;
     /** The scale the plan is at, when the block does not state one. */
     readonly denominator: number;
+    /** The coordinate system, as the heading should state it. */
+    readonly origin: string;
+    /** The computed area, already worded. Null when there is no closed ring. */
+    readonly area: string | null;
   };
   readonly hiddenLayers?: readonly LayerId[];
   /**
@@ -259,17 +264,51 @@ export function DrawingCanvas({
     return () => observer.disconnect();
   }, []);
 
+  /**
+   * The extent worth fitting: the drawing *and* whatever is written on it.
+   *
+   * Fitting the drawing alone put the heading off the top of the screen, so
+   * adding a title looked like it had done nothing. An annotation is part of
+   * what the sheet says, and "fit the plan on screen" has to mean the plan.
+   *
+   * The heading's *anchor* is what is included, because its height is pixels
+   * rather than ground — `fitPaddingPx` below is what leaves room for that.
+   */
+  const fitBounds = useMemo(() => {
+    const points: Coordinates[] = [drawing.bounds.min, drawing.bounds.max];
+    if (annotations?.titleBlock) points.push(annotations.titleBlock.at);
+    for (const box of annotations?.textBoxes ?? []) points.push(box.at);
+
+    return {
+      min: {
+        easting: Math.min(...points.map((p) => p.easting)),
+        northing: Math.min(...points.map((p) => p.northing)),
+      },
+      max: {
+        easting: Math.max(...points.map((p) => p.easting)),
+        northing: Math.max(...points.map((p) => p.northing)),
+      },
+    };
+  }, [drawing.bounds, annotations]);
+
+  /*
+   * Extra room when there is a heading, because it is drawn in pixels above
+   * its anchor and no amount of survey-unit padding knows how tall it is.
+   * Five lines and a bar is about 130px; 150 leaves it breathing space.
+   */
+  const fitPaddingPx = annotations?.titleBlock ? 150 : 56;
+
   const fit = useCallback(() => {
     if (size.width === 0 || size.height === 0) return;
-    setViewport(fitTo(drawing.bounds, size));
-  }, [drawing.bounds, size]);
+    setViewport(fitTo(fitBounds, size, fitPaddingPx));
+  }, [fitBounds, fitPaddingPx, size]);
 
   // Fit once the canvas has a size, and again if the survey is replaced with
   // one that would otherwise be off-screen.
-  const boundsKey = `${drawing.bounds.min.easting},${drawing.bounds.min.northing},${drawing.bounds.max.easting},${drawing.bounds.max.northing}`;
+  const boundsKey = `${fitBounds.min.easting},${fitBounds.min.northing},${fitBounds.max.easting},${fitBounds.max.northing}`;
   useEffect(() => {
     if (size.width === 0 || size.height === 0) return;
-    setViewport((current) => (current ? current : fitTo(drawing.bounds, size)));
+    setViewport((current) => (current ? current : fitTo(fitBounds, size, fitPaddingPx)));
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [size.width, size.height]);
 
@@ -318,14 +357,61 @@ export function DrawingCanvas({
     [selectedId, selectedIds],
   );
 
-  /** Annotation anchors, for hit-testing. Empty on a plan that has none. */
-  const annotationTargets = useMemo(
-    () => [
-      ...(annotations?.titleBlock ? [{ id: annotations.titleBlock.id, at: annotations.titleBlock.at }] : []),
-      ...(annotations?.textBoxes ?? []).map((box) => ({ id: box.id, at: box.at })),
-    ],
-    [annotations],
-  );
+  /**
+   * Annotation anchors, for hit-testing. Empty on a plan that has none.
+   *
+   * The heading contributes one target *per visible part*, because each part
+   * is a separate thing to tap and drag — a plan's title, its stated scale and
+   * its scale bar are separate statements, not one object. `dy` is where the
+   * part sits below the heading's anchor, in screen pixels, which is how the
+   * renderer stacks them.
+   */
+  const annotationTargets = useMemo(() => {
+    const block = annotations?.titleBlock;
+    const targets: AnnotationTarget[] = [];
+
+    if (block) {
+      /*
+       * The same stack the renderer builds, and it has to stay the same.
+       *
+       * Two descriptions of one layout is a bug waiting to happen — the
+       * version that has already happened is a target sitting where a line
+       * used to be. It is duplicated rather than shared because the renderer
+       * needs it in JSX and this needs it as data; the heights below are the
+       * ones in `Annotations.tsx`, and changing either without the other puts
+       * every hit target on the wrong line.
+       */
+      const rows: { readonly part: string; readonly height: number }[] = [];
+      if (block.showTitle) rows.push({ part: 'title', height: block.subtitle ? 36 : 20 });
+      if (block.showRepresentativeFraction) rows.push({ part: 'fraction', height: 20 });
+      if (block.showScaleBar) rows.push({ part: 'bar', height: 30 });
+      if (block.showOrigin) rows.push({ part: 'origin', height: 20 });
+      if (block.showArea && annotations.area) rows.push({ part: 'area', height: 20 });
+
+      // The heading grows upward from its anchor so it can never overrun the
+      // drawing — see `TitleBlockMark`. The targets have to be lifted with it.
+      const HEADING_GAP_PX = 22;
+      const lift = rows.reduce((total, row) => total + row.height, 0) + HEADING_GAP_PX;
+
+      let cursor = 0;
+      for (const row of rows) {
+        const own = block.offsets?.[row.part as keyof NonNullable<typeof block.offsets>];
+        targets.push({
+          id: `${block.id}:${row.part}`,
+          at: own
+            ? { easting: block.at.easting + own.de, northing: block.at.northing + own.dn }
+            : block.at,
+          dy: cursor - lift,
+          // Centred rather than starting at the anchor, unlike a text box.
+          wide: true,
+        });
+        cursor += row.height;
+      }
+    }
+
+    for (const box of annotations?.textBoxes ?? []) targets.push({ id: box.id, at: box.at });
+    return targets;
+  }, [annotations]);
 
   /**
    * Snap targets with everything the move disturbs taken out.
@@ -865,10 +951,12 @@ export function DrawingCanvas({
                 selectedIds={[...moving]}
                 title={annotations.title}
                 denominator={annotations.denominator}
+                origin={annotations.origin}
+                area={annotations.area}
                 unit={unit}
                 worldPerPixel={viewport ? 1 / viewport.scale : 1}
-                {...(drag && moving.has(annotations.titleBlock.id)
-                  ? { offset: drag, moving: true }
+                {...(drag && headingPart(annotations.titleBlock.id, moving)
+                  ? { offset: drag, moving: true, movingPart: headingPart(annotations.titleBlock.id, moving) }
                   : {})}
               />
             ) : null}
@@ -1416,6 +1504,51 @@ function enclosedBy(
 }
 
 /**
+ * One tappable thing in the annotation layer.
+ *
+ * A heading contributes one of these per visible line rather than one for the
+ * whole thing, because on a survey plan the title, the stated scale, the bar,
+ * the origin and the area are separate statements that a surveyor positions
+ * and shows separately.
+ */
+interface AnnotationTarget {
+  readonly id: string;
+  readonly at: Coordinates;
+  /** Screen pixels below the anchor, for a line stacked under a heading. */
+  readonly dy?: number | undefined;
+  /** Centred on the anchor rather than running right from it. */
+  readonly wide?: boolean | undefined;
+}
+
+/**
+ * Which part of the heading is being dragged, if any.
+ *
+ * The selection holds ids like `title_x9:bar`, so the part is the suffix. Read
+ * from the selection rather than stored beside it, because the selection is
+ * the single record of what is being moved and a second copy is a second thing
+ * to get wrong.
+ */
+function headingPart(
+  blockId: string,
+  selected: ReadonlySet<string>,
+): TitleBlockPart | undefined {
+  for (const id of selected) {
+    if (!id.startsWith(`${blockId}:`)) continue;
+    const part = id.slice(blockId.length + 1);
+    if (
+      part === 'title' ||
+      part === 'fraction' ||
+      part === 'bar' ||
+      part === 'origin' ||
+      part === 'area'
+    ) {
+      return part;
+    }
+  }
+  return undefined;
+}
+
+/**
  * Nearest element within the touch tolerance. Points win over lines, and lines
  * over areas, because that is the order a user expects to grab things in.
  */
@@ -1431,25 +1564,30 @@ function hitTest(
    * annotation — anything else means a note over a boundary can be seen and
    * not touched.
    */
-  annotations: readonly { readonly id: string; readonly at: Coordinates }[] = [],
+  annotations: readonly AnnotationTarget[] = [],
 ): string | null {
   let best: { id: string; rank: number; distance: number } | null = null;
 
   for (const annotation of annotations) {
-    const p = toScreen(annotation.at, viewport, size);
+    const projected = toScreen(annotation.at, viewport, size);
+    const p = { x: projected.x, y: projected.y + (annotation.dy ?? 0) };
     /*
      * A box round the anchor rather than the drawn extent. The renderer knows
      * how wide the text is and this does not, and the two agreeing exactly
      * matters less than the target being reachable: a generous box that is
      * slightly wrong is a control that works, and an exact one that needs
      * aiming is not.
+     *
+     * Heading lines are centred on their anchor and text boxes run right from
+     * theirs, so the box is drawn to match — a centred target measured from
+     * one corner would sit half off the thing it is for.
      */
-    if (
-      point.x >= p.x - 20 &&
-      point.x <= p.x + 180 &&
-      point.y >= p.y - 22 &&
-      point.y <= p.y + 60
-    ) {
+    const left = annotation.wide ? p.x - 110 : p.x - 20;
+    const right = annotation.wide ? p.x + 110 : p.x + 180;
+    const top = annotation.wide ? p.y - 16 : p.y - 22;
+    const bottom = annotation.wide ? p.y + 18 : p.y + 60;
+
+    if (point.x >= left && point.x <= right && point.y >= top && point.y <= bottom) {
       // Rank below zero so an annotation beats every element under it.
       consider({ id: annotation.id, rank: -1, distance: Math.hypot(p.x - point.x, p.y - point.y) });
     }

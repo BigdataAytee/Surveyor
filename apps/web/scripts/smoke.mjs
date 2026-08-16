@@ -836,7 +836,7 @@ for (const [name, viewport] of [
   // The offer, on the assistant's own initiative once the boundary validates.
   await page.getByRole('button', { name: 'Assistant' }).click();
   await page.waitForTimeout(900);
-  const offer = page.getByRole('button', { name: 'Add all three' }).locator('visible=true');
+  const offer = page.getByRole('button', { name: 'Add the whole heading' }).locator('visible=true');
   expect((await offer.count()) > 0, 'annotations: no offer to put the heading on the plan');
 
   // The typed command, which must reach the same handler as that button.
@@ -844,15 +844,31 @@ for (const [name, viewport] of [
     .getByLabel('Ask the assistant, or paste survey data')
     .locator('visible=true')
     .first();
-  await input.fill('add the title and scale bar');
+  await input.fill('add the heading');
   await page.getByRole('button', { name: 'Send' }).locator('visible=true').first().click();
   await page.waitForTimeout(900);
   await page.keyboard.press('Escape');
   await page.waitForTimeout(500);
 
+  /*
+   * Separate lines, not a box.
+   *
+   * A survey plan states its heading as distinct underlined lines above the
+   * drawing — title, scale, bar, origin, area — and each is its own object to
+   * show, move and tap. This drew them inside one bordered plate at the
+   * bottom left, which is a CAD habit rather than how a lodged plan looks.
+   */
   expect(
-    (await page.locator('.annotation--title').count()) === 1,
-    'annotations: the typed command did not put a title block on the drawing',
+    (await page.locator('.annotation__plate').count()) === 0,
+    'annotations: the heading is drawn inside a box',
+  );
+  expect(
+    (await page.locator('.annotation--title').count()) >= 2,
+    'annotations: the heading is one object rather than separate lines',
+  );
+  expect(
+    (await page.locator('.annotation__rule').count()) >= 2,
+    'annotations: the heading lines are not underlined',
   );
 
   // The title came from the plan, because nobody has typed one.
@@ -863,6 +879,137 @@ for (const [name, viewport] of [
     titleText.some((line) => /Adeola Close/.test(line ?? '')),
     `annotations: title block does not name the plan — ${JSON.stringify(titleText)}`,
   );
+
+  /*
+   * The heading sits above the drawing and never touches it, at any zoom.
+   *
+   * It was laid out growing *downward* from an anchor placed a survey-unit
+   * margin above the boundary — but its height is text, which is pixels, so
+   * the margin shrank as you zoomed out while the heading did not. The AREA
+   * line ended up written across a boundary dimension. It now grows upward
+   * from the anchor, which is what makes this hold at every zoom rather than
+   * at the one it was checked at.
+   */
+  for (const [label, clicks, control] of [
+    ['fitted', 0, null],
+    ['zoomed out', 4, 'Zoom out'],
+    ['zoomed in', 3, 'Zoom in'],
+  ]) {
+    await page.getByRole('button', { name: 'Fit plan to screen' }).first().click();
+    await page.waitForTimeout(250);
+    for (let step = 0; step < clicks; step += 1) {
+      await page.getByRole('button', { name: control }).first().click();
+      await page.waitForTimeout(120);
+    }
+    await page.waitForTimeout(300);
+
+    const clearance = await page.evaluate(() => {
+      const heading = [...document.querySelectorAll('.annotation--title')].map((node) =>
+        node.getBoundingClientRect(),
+      );
+      const survey = [...document.querySelectorAll('.layer--boundary *, .layer--dimensions *')]
+        .map((node) => node.getBoundingClientRect())
+        .filter((box) => box.width > 0 || box.height > 0);
+      if (heading.length === 0 || survey.length === 0) return null;
+      return (
+        Math.min(...survey.map((box) => box.top)) -
+        Math.max(...heading.map((box) => box.bottom))
+      );
+    });
+
+    expect(
+      clearance !== null && clearance > 0,
+      `annotations: the heading overlaps the drawing when ${label} (${clearance}px)`,
+    );
+  }
+
+  await page.getByRole('button', { name: 'Fit plan to screen' }).first().click();
+  await page.waitForTimeout(400);
+
+  // A free text note, added, named and formatted.
+  await page.getByRole('button', { name: '+ Add' }).click();
+  await page.waitForTimeout(500);
+  await page.getByRole('button', { name: 'Text note' }).locator('visible=true').first().click();
+  await page.waitForTimeout(600);
+
+  const field = page.getByLabel('Text box contents').locator('visible=true').first();
+  expect(
+    await field.isVisible().catch(() => false),
+    'annotations: adding a note did not open the panel for typing what it says',
+  );
+  await field.fill('Fence in poor repair');
+  await page.waitForTimeout(300);
+  await page.getByRole('button', { name: 'Bold' }).locator('visible=true').first().click();
+  await page.waitForTimeout(300);
+  await page.getByRole('button', { name: 'Done' }).locator('visible=true').first().click();
+  await page.waitForTimeout(800);
+
+  const note = await page
+    .locator('.annotation--text text')
+    .evaluateAll((nodes) => nodes.map((node) => [node.textContent, node.style.fontWeight]));
+  expect(
+    note.some(([text, weight]) => text === 'Fence in poor repair' && weight === '700'),
+    `annotations: the note is not on the drawing as typed and formatted — ${JSON.stringify(note)}`,
+  );
+
+  // Selecting an annotation names it for what it is, rather than "1 objects".
+  await page.locator('.annotation--text').first().click();
+  await page.waitForTimeout(500);
+  if (await page.locator('.contextbar').isVisible()) {
+    const said = await page.locator('.contextbar__title').first().innerText();
+    expect(/Text note/i.test(said), `annotations: a selected note is called "${said}"`);
+  } else {
+    problems.push('annotations: tapping a note did not select it');
+  }
+
+  /*
+   * Each line is its own object: tapping one selects that one, and dragging
+   * it moves that one.
+   */
+  const barBox = await page.locator('.annotation--bar').first().boundingBox();
+  expect(Boolean(barBox), 'annotations: no scale bar to select');
+
+  if (barBox) {
+    const cx = barBox.x + barBox.width / 2;
+    const cy = barBox.y + barBox.height / 2;
+    await page.mouse.click(cx, cy);
+    await page.waitForTimeout(500);
+
+    const said = await page.locator('.contextbar__title').first().innerText().catch(() => '');
+    expect(
+      /Scale bar/.test(said),
+      `annotations: tapping the scale bar selected "${said.replace(/\n/g, ' ')}"`,
+    );
+
+    const positions = () =>
+      page.locator('.annotation--title').evaluateAll((nodes) =>
+        nodes.map((node) => {
+          const box = node.getBoundingClientRect();
+          return { id: node.getAttribute('data-id'), x: Math.round(box.x), y: Math.round(box.y) };
+        }),
+      );
+
+    const wasAt = await positions();
+    await page.mouse.move(cx, cy);
+    await page.mouse.down();
+    await page.mouse.move(cx + 80, cy + 40, { steps: 12 });
+    await page.mouse.up();
+    await page.waitForTimeout(800);
+    const nowAt = await positions();
+
+    for (const now of nowAt) {
+      const was = wasAt.find((row) => row.id === now.id);
+      if (!was) continue;
+      const shifted = Math.abs(now.x - was.x) > 4 || Math.abs(now.y - was.y) > 4;
+      const isBar = now.id?.endsWith(':bar') ?? false;
+      expect(
+        shifted === isBar,
+        isBar
+          ? 'annotations: dragging the scale bar did not move it'
+          : `annotations: dragging the scale bar also moved ${now.id}`,
+      );
+    }
+  }
 
   /*
    * The scale bar against the drawing itself.
@@ -904,55 +1051,6 @@ for (const [name, viewport] of [
       `annotations: the scale bar disagrees with the drawing by ${(disagreement * 100).toFixed(1)}%` +
         ` (bar ${fromBar.toFixed(4)} m/px, drawing ${fromDrawing.toFixed(4)} m/px)`,
     );
-  }
-
-  // Dragging it moves it, and moves nothing else.
-  const plate = await page.locator('.annotation--title').boundingBox();
-  await page.mouse.move(plate.x + 20, plate.y + 12);
-  await page.mouse.down();
-  await page.mouse.move(plate.x + 70, plate.y + 62, { steps: 12 });
-  await page.mouse.up();
-  await page.waitForTimeout(800);
-  const moved = await page.locator('.annotation--title').boundingBox();
-  expect(
-    Math.abs(moved.x - plate.x - 50) < 4 && Math.abs(moved.y - plate.y - 50) < 4,
-    `annotations: dragging the title block moved it to ${moved.x - plate.x}, ${moved.y - plate.y}`,
-  );
-
-  // A free text note, added, named and formatted.
-  await page.getByRole('button', { name: '+ Add' }).click();
-  await page.waitForTimeout(500);
-  await page.getByRole('button', { name: 'Text note' }).locator('visible=true').first().click();
-  await page.waitForTimeout(600);
-
-  const field = page.getByLabel('Text box contents').locator('visible=true').first();
-  expect(
-    await field.isVisible().catch(() => false),
-    'annotations: adding a note did not open the panel for typing what it says',
-  );
-  await field.fill('Fence in poor repair');
-  await page.waitForTimeout(300);
-  await page.getByRole('button', { name: 'Bold' }).locator('visible=true').first().click();
-  await page.waitForTimeout(300);
-  await page.getByRole('button', { name: 'Done' }).locator('visible=true').first().click();
-  await page.waitForTimeout(800);
-
-  const note = await page
-    .locator('.annotation--text text')
-    .evaluateAll((nodes) => nodes.map((node) => [node.textContent, node.style.fontWeight]));
-  expect(
-    note.some(([text, weight]) => text === 'Fence in poor repair' && weight === '700'),
-    `annotations: the note is not on the drawing as typed and formatted — ${JSON.stringify(note)}`,
-  );
-
-  // Selecting an annotation names it for what it is, rather than "1 objects".
-  await page.locator('.annotation--text').first().click();
-  await page.waitForTimeout(500);
-  if (await page.locator('.contextbar').isVisible()) {
-    const said = await page.locator('.contextbar__title').first().innerText();
-    expect(/Text note/i.test(said), `annotations: a selected note is called "${said}"`);
-  } else {
-    problems.push('annotations: tapping a note did not select it');
   }
 
   await shot(page, 'annotations');

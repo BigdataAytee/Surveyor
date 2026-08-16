@@ -17,7 +17,12 @@
  * second interaction model beside it.
  */
 
-import type { Coordinates, FreeTextBox, TitleScaleBlock } from '@surveyor/contracts';
+import type {
+  Coordinates,
+  FreeTextBox,
+  TitleBlockPart,
+  TitleScaleBlock,
+} from '@surveyor/contracts';
 import { representativeFraction, scaleBar } from '@surveyor/engine';
 
 /** Screen position of a survey coordinate. */
@@ -95,11 +100,20 @@ export function TextBoxMark({
 }
 
 /**
- * The title, the representative fraction and the scale bar.
+ * The heading: title, scale, bar, origin and area.
  *
- * One `<g>`, one `data-id`, one thing to tap — because they are one statement
- * about the drawing. Which parts show is the surveyor's choice; what they say
- * comes from the plan unless they have overridden it.
+ * Laid out the way a lodged survey plan actually lays it out — centred above
+ * the drawing, as separate underlined lines, with no box around any of it.
+ * That is not a style preference. A plan's heading is a series of distinct
+ * statements ("this is the property of…", "scale 1:1000", "origin UTM zone
+ * 32", "area 2454.525 sq m"), each underlined so it reads as its own claim,
+ * and a surveyor shows, hides and positions them individually. Wrapping them
+ * in one bordered plate — which is what this drew before — is a CAD habit
+ * that makes a plan look like a screenshot of a program.
+ *
+ * Each part carries its own `data-id`, so each can be selected and dragged on
+ * its own. They still stack automatically until one is moved, so a heading
+ * nobody has rearranged stays tidy.
  */
 export function TitleBlockMark({
   block,
@@ -111,6 +125,9 @@ export function TitleBlockMark({
   denominator,
   unit,
   worldPerPixel,
+  origin,
+  area,
+  movingPart,
 }: AnnotationProps & {
   readonly block: TitleScaleBlock;
   /** What the plan is called, when the block does not override it. */
@@ -120,15 +137,14 @@ export function TitleBlockMark({
   readonly unit: string;
   /** Survey units per screen pixel, for drawing the bar at its true length. */
   readonly worldPerPixel: number;
+  /** The coordinate system, as the plan should state it. */
+  readonly origin: string;
+  /** The computed area, already worded. Null when there is no closed ring. */
+  readonly area: string | null;
+  /** Which single part is being dragged, if any. */
+  readonly movingPart?: TitleBlockPart | undefined;
 }) {
-  const dragging = moving && offset;
-  const at = project(
-    dragging
-      ? { easting: block.at.easting + offset.de, northing: block.at.northing + offset.dn }
-      : block.at,
-  );
-  const selected = selectedIds.includes(block.id);
-  const { x, y } = at;
+  const anchor = project(block.at);
 
   const bar = scaleBar(denominator, 50, unit);
   /*
@@ -139,58 +155,179 @@ export function TitleBlockMark({
    */
   const barPixels = bar.length / Math.max(worldPerPixel, 1e-9);
 
-  const lines: string[] = [];
-  if (block.showTitle) lines.push(block.title ?? title);
-  if (block.subtitle) lines.push(block.subtitle);
-  if (block.showRepresentativeFraction) lines.push(representativeFraction(denominator));
+  /*
+   * The stack, built in order and measured as it goes.
+   *
+   * Line spacing is in pixels rather than survey units on purpose: text is a
+   * fixed size on screen, so a heading whose lines drifted apart as you zoomed
+   * in would come apart. Only the *position* of the heading is on the ground.
+   */
+  const rows: {
+    readonly part: TitleBlockPart;
+    readonly text: string;
+    readonly y: number;
+    readonly emphasis?: boolean;
+    readonly bar?: boolean;
+  }[] = [];
+  let cursor = 0;
 
-  const height = lines.length * 15 + (block.showScaleBar ? 26 : 0) + 12;
-  const width = Math.max(
-    barPixels + 16,
-    ...lines.map((line) => line.length * 7 + 16),
-    120,
-  );
+  if (block.showTitle) {
+    rows.push({ part: 'title', text: block.title ?? title, y: cursor, emphasis: true });
+    cursor += 20;
+    if (block.subtitle) {
+      // The subtitle belongs to the title and moves with it, so it is drawn
+      // as part of that row rather than as a part of its own.
+      cursor += 16;
+    }
+  }
+  if (block.showRepresentativeFraction) {
+    rows.push({ part: 'fraction', text: representativeFraction(denominator), y: cursor });
+    cursor += 20;
+  }
+  if (block.showScaleBar) {
+    rows.push({ part: 'bar', text: bar.label, y: cursor, bar: true });
+    cursor += 30;
+  }
+  if (block.showOrigin) {
+    rows.push({ part: 'origin', text: `ORIGIN:- ${origin}`, y: cursor });
+    cursor += 20;
+  }
+  if (block.showArea && area) {
+    rows.push({ part: 'area', text: `AREA:- ${area}`, y: cursor });
+    cursor += 20;
+  }
+
+  /*
+   * The stack grows *upward* from the anchor, and this is the whole reason it
+   * stays clear of the drawing.
+   *
+   * The anchor is on the ground, just above the boundary; the lines are text,
+   * so their heights are pixels that do not change with zoom. Stacking
+   * downward meant the heading's height was fixed while its clearance shrank
+   * as you zoomed out — so at any distance the last lines were written across
+   * the plan. It was, and the AREA line landed on a boundary dimension.
+   *
+   * Pinning the *bottom* of the heading to the anchor inverts that: however
+   * tall the heading is and whatever the zoom, it occupies the space above the
+   * drawing and cannot reach it. The extra gap clears the dimension labels,
+   * which sit outside the boundary and are themselves a fixed pixel size.
+   */
+  const GAP_PX = 22;
+  const lift = cursor + GAP_PX;
 
   return (
-    <g
-      className={`annotation annotation--title${selected ? ' is-selected' : ''}${dragging ? ' is-dragging' : ''}`}
-      data-id={block.id}
-    >
-      <rect className="annotation__plate" x={x} y={y} width={width} height={height} rx={3} />
+    <>
+      {rows.map((row) => {
+        const own = block.offsets?.[row.part];
+        const dragged = moving && offset && (movingPart === undefined || movingPart === row.part);
 
-      {lines.map((line, index) => (
-        <text
-          key={index}
-          className={`annotation__text${index === 0 && block.showTitle ? ' annotation__text--title' : ''}`}
-          x={x + 8}
-          y={y + 18 + index * 15}
-          style={styleOf(block.style)}
-        >
-          {line}
-        </text>
-      ))}
+        /*
+         * A part's position: the heading's anchor, plus its own offset if it
+         * has been moved, plus a drag in progress. The offset is in survey
+         * units like everything else the canvas moves, so dragging a line
+         * across the sheet means the same thing at every zoom.
+         */
+        const de = (own?.de ?? 0) + (dragged ? offset.de : 0);
+        const dn = (own?.dn ?? 0) + (dragged ? offset.dn : 0);
+        const shifted =
+          de === 0 && dn === 0
+            ? anchor
+            : project({ easting: block.at.easting + de, northing: block.at.northing + dn });
 
-      {block.showScaleBar ? (
-        <g className="annotation__bar" transform={`translate(${x + 8}, ${y + lines.length * 15 + 18})`}>
-          {/* The bar, with its ticks at the quarters a reader takes off it. */}
-          <line x1={0} y1={0} x2={barPixels} y2={0} />
-          {bar.ticks.map((tick) => {
-            const tickX = (tick / Math.max(bar.length, 1e-9)) * barPixels;
-            return <line key={tick} x1={tickX} y1={-4} x2={tickX} y2={4} />;
-          })}
-          <text className="annotation__bar-label" x={0} y={16}>
-            0
-          </text>
-          <text className="annotation__bar-label" x={barPixels} y={16} textAnchor="end">
-            {bar.label}
-          </text>
-        </g>
-      ) : null}
+        const id = `${block.id}:${row.part}`;
+        const selected = selectedIds.includes(id) || selectedIds.includes(block.id);
+        const x = shifted.x;
+        const y = shifted.y + row.y - lift;
 
-      {selected ? (
-        <rect className="annotation__outline" x={x} y={y} width={width} height={height} rx={3} />
-      ) : null}
-    </g>
+        // Underline width. Estimated from the text, because measuring real
+        // glyphs would need a layout pass per frame — the same estimate the
+        // labelling engine uses, and close enough for a rule.
+        const width = row.bar ? barPixels : row.text.length * 7.2;
+
+        return (
+          <g
+            key={row.part}
+            className={
+              `annotation annotation--title annotation--${row.part}` +
+              `${selected ? ' is-selected' : ''}${dragged ? ' is-dragging' : ''}`
+            }
+            data-id={id}
+          >
+            {/* An invisible, generous hit target — text is thin to aim at. */}
+            <rect
+              className="annotation__target"
+              x={x - width / 2 - 6}
+              y={y - 14}
+              width={width + 12}
+              height={row.bar ? 34 : 20}
+            />
+
+            {row.bar ? (
+              <g className="annotation__bar" transform={`translate(${x - barPixels / 2}, ${y})`}>
+                <line x1={0} y1={0} x2={barPixels} y2={0} />
+                {/* Ticks at the quarters a reader actually takes off it. */}
+                {bar.ticks.map((tick) => {
+                  const tickX = (tick / Math.max(bar.length, 1e-9)) * barPixels;
+                  return <line key={tick} x1={tickX} y1={-4} x2={tickX} y2={4} />;
+                })}
+                <text className="annotation__bar-label" x={0} y={16} textAnchor="middle">
+                  0
+                </text>
+                <text className="annotation__bar-label" x={barPixels} y={16} textAnchor="middle">
+                  {bar.label}
+                </text>
+              </g>
+            ) : (
+              <>
+                <text
+                  className={`annotation__text${row.emphasis ? ' annotation__text--title' : ''}`}
+                  x={x}
+                  y={y}
+                  textAnchor="middle"
+                  style={styleOf(block.style)}
+                >
+                  {row.text}
+                </text>
+                {/*
+                  The underline, which is the plan's own convention and not a
+                  decoration: it is what separates one statement from the next
+                  where there is no box to do it.
+                */}
+                <line
+                  className="annotation__rule"
+                  x1={x - width / 2}
+                  y1={y + 3}
+                  x2={x + width / 2}
+                  y2={y + 3}
+                />
+                {row.part === 'title' && block.subtitle ? (
+                  <text
+                    className="annotation__text"
+                    x={x}
+                    y={y + 16}
+                    textAnchor="middle"
+                    style={styleOf(block.style)}
+                  >
+                    {block.subtitle}
+                  </text>
+                ) : null}
+              </>
+            )}
+
+            {selected ? (
+              <rect
+                className="annotation__outline"
+                x={x - width / 2 - 6}
+                y={y - 14}
+                width={width + 12}
+                height={row.bar ? 34 : 20}
+                rx={2}
+              />
+            ) : null}
+          </g>
+        );
+      })}
+    </>
   );
 }
 

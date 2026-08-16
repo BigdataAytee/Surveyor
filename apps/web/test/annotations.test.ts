@@ -24,7 +24,13 @@ import type { SurveyDataModel, TitleScaleBlock } from '@surveyor/contracts';
 import { runPipeline, ringFromPointOrder } from '@surveyor/engine';
 
 import { respond, titleScaleIntent, type AssistantContext, type Intent } from '../src/ai/assistant.js';
-import { annotationAnchor, makeTextBox, makeTitleBlock, withParts } from '../src/state/annotations.js';
+import {
+  annotationAnchor,
+  makeTextBox,
+  makeTitleBlock,
+  titleBlockPart,
+  withParts,
+} from '../src/state/annotations.js';
 import { reducer, initialState, type Action, type ProjectState } from '../src/state/store.js';
 
 const MODEL: SurveyDataModel = {
@@ -63,6 +69,83 @@ function after(...actions: readonly Action[]): SurveyDataModel {
 // ---------------------------------------------------------------------------
 // Rule 1 — absent means "read it from the plan"
 // ---------------------------------------------------------------------------
+
+// ---------------------------------------------------------------------------
+// The heading is separate lines, not a box
+// ---------------------------------------------------------------------------
+
+test('a heading states the origin and the area, because a survey plan does', () => {
+  const block = makeTitleBlock({ easting: 0, northing: 0 });
+
+  /*
+   * On a real plan these are not optional extras. A bearing and a distance
+   * mean nothing without the origin they were measured from, and the area is
+   * what most plans exist to state — so a heading without them is not a survey
+   * plan's heading. Both default on for that reason.
+   */
+  assert.equal(block.showOrigin, true);
+  assert.equal(block.showArea, true);
+});
+
+test('each line of the heading is its own object, addressable on its own', () => {
+  const block = makeTitleBlock({ easting: 0, northing: 0 });
+
+  for (const part of ['title', 'fraction', 'bar', 'origin', 'area'] as const) {
+    assert.equal(
+      titleBlockPart(block, `${block.id}:${part}`),
+      part,
+      `${part} is not addressable`,
+    );
+  }
+
+  // And nothing else is mistaken for one.
+  assert.equal(titleBlockPart(block, block.id), null);
+  assert.equal(titleBlockPart(block, `${block.id}:invented`), null);
+  assert.equal(titleBlockPart(block, 'someone_elses:title'), null);
+  assert.equal(titleBlockPart(block, null), null);
+  assert.equal(titleBlockPart(undefined, `${block.id}:title`), null);
+});
+
+test('moving one line of the heading moves only that line', () => {
+  const block = makeTitleBlock({ easting: 544800, northing: 718940 });
+  const base = after({ type: 'add-title-block', block });
+
+  const moved = run(start(base), {
+    type: 'update-title-block',
+    patch: { offsets: { bar: { de: 12, dn: -4 } } },
+  }).model;
+
+  /*
+   * The heading's own anchor is untouched, and no other part gained an
+   * offset — which is what "each is separate" has to mean once it is more
+   * than a description of how it looks.
+   */
+  assert.deepEqual(moved.titleBlock?.at, block.at);
+  assert.deepEqual(moved.titleBlock?.offsets?.bar, { de: 12, dn: -4 });
+  assert.equal(moved.titleBlock?.offsets?.title, undefined);
+  assert.equal(moved.titleBlock?.offsets?.fraction, undefined);
+  assert.equal(moved.titleBlock?.offsets?.origin, undefined);
+  assert.equal(moved.titleBlock?.offsets?.area, undefined);
+});
+
+test('hiding one line leaves the rest of the heading alone', () => {
+  const block = makeTitleBlock({ easting: 0, northing: 0 });
+  const base = after({ type: 'add-title-block', block });
+
+  // What Delete on a selected scale bar does. It must not take the heading
+  // with it — a plausible-looking button that removes five lines instead of
+  // one is a small disaster.
+  const hidden = run(start(base), {
+    type: 'update-title-block',
+    patch: { showScaleBar: false },
+  }).model;
+
+  assert.ok(hidden.titleBlock, 'deleting one line removed the whole heading');
+  assert.equal(hidden.titleBlock?.showScaleBar, false);
+  assert.equal(hidden.titleBlock?.showTitle, true);
+  assert.equal(hidden.titleBlock?.showOrigin, true);
+  assert.equal(hidden.titleBlock?.showArea, true);
+});
 
 test('a new title block decides nothing about its own contents', () => {
   const block = makeTitleBlock({ easting: 0, northing: 0 });
@@ -154,6 +237,13 @@ test('typed commands reach the same intent the card’s buttons carry', () => {
     ['add the scale as 1:500', { representativeFraction: true }],
     ['show the representative fraction', { representativeFraction: true }],
     ['add the title and scale', { title: true, scaleBar: true, representativeFraction: true }],
+    // "heading" is the whole thing; "title" is one line of it. They used to be
+    // synonyms, which was fine when the heading *was* the title.
+    ['add the heading', { title: true, representativeFraction: true, scaleBar: true, origin: true, area: true }],
+    ['put a title block on it', { title: true, origin: true, area: true }],
+    ['show the origin', { origin: true }],
+    ['add the datum and zone', { origin: true }],
+    ['put the area on the plan', { area: true }],
   ];
 
   for (const [question, expected] of cases) {
@@ -184,14 +274,34 @@ test('the title/scale command does not swallow unrelated questions', () => {
   }
 });
 
+test('asking for the heading turns on every line, and nothing is missed', () => {
+  const intent = titleScaleIntent('add the heading');
+  assert.ok(intent && intent.kind === 'add-title-block');
+
+  /*
+   * Every part the block has. If a line is added to the heading and not to
+   * this intent, "add the heading" silently stops meaning the heading — which
+   * is the failure a label like "Add all three" makes invisible.
+   */
+  const block = makeTitleBlock({ easting: 0, northing: 0 });
+  const flags = Object.keys(block).filter((key) => key.startsWith('show'));
+  assert.equal(flags.length, 5, 'the heading gained a line this test does not know about');
+
+  assert.equal(intent.title, true);
+  assert.equal(intent.representativeFraction, true);
+  assert.equal(intent.scaleBar, true);
+  assert.equal(intent.origin, true);
+  assert.equal(intent.area, true);
+});
+
 test('the offer and the command produce the same model', () => {
   const at = { easting: 544800, northing: 718880 };
 
-  // What the card's "Add all three" does.
+  // What the card's "Add the whole heading" does.
   const fromCard = after({ type: 'add-title-block', block: makeTitleBlock(at) });
 
   // What typing it does, through the intent the chat produces.
-  const intent = titleScaleIntent('add the title and scale');
+  const intent = titleScaleIntent('add the heading');
   assert.ok(intent && intent.kind === 'add-title-block');
   const fromChat = after({
     type: 'add-title-block',
@@ -201,6 +311,8 @@ test('the offer and the command produce the same model', () => {
         ? {}
         : { representativeFraction: intent.representativeFraction }),
       ...(intent.scaleBar === undefined ? {} : { scaleBar: intent.scaleBar }),
+      ...(intent.origin === undefined ? {} : { origin: intent.origin }),
+      ...(intent.area === undefined ? {} : { area: intent.area }),
     }),
   });
 
@@ -208,6 +320,8 @@ test('the offer and the command produce the same model', () => {
     showTitle: model.titleBlock?.showTitle,
     showRepresentativeFraction: model.titleBlock?.showRepresentativeFraction,
     showScaleBar: model.titleBlock?.showScaleBar,
+    showOrigin: model.titleBlock?.showOrigin,
+    showArea: model.titleBlock?.showArea,
     at: model.titleBlock?.at,
   });
   assert.deepEqual(shown(fromChat), shown(fromCard));
@@ -294,13 +408,40 @@ test('moving an annotation moves nothing else', () => {
 // Where a new annotation lands
 // ---------------------------------------------------------------------------
 
-test('the title block lands below the drawing, clear of the survey', () => {
+test('the heading lands above the drawing, centred on it', () => {
   const pipeline = runPipeline(MODEL);
   assert.ok(pipeline.ok);
   const bounds = pipeline.drawing.bounds;
 
   const at = annotationAnchor(MODEL, bounds, 0, 'title-block');
-  assert.ok(at.northing < bounds.min.northing, 'the title block landed on top of the survey');
+
+  /*
+   * Above and centred, which is where a survey plan puts its heading — the
+   * title, the scale, the origin and the area are read before the drawing.
+   * It used to land below and to the left, which is a CAD-tool habit.
+   */
+  assert.ok(at.northing > bounds.max.northing, 'the heading did not land above the drawing');
+  assert.equal(at.easting, (bounds.min.easting + bounds.max.easting) / 2);
+});
+
+test('the heading clears the drawing without being flung off the sheet', () => {
+  const pipeline = runPipeline(MODEL);
+  assert.ok(pipeline.ok);
+  const bounds = pipeline.drawing.bounds;
+  const height = bounds.max.northing - bounds.min.northing;
+  const above = annotationAnchor(MODEL, bounds, 0, 'title-block').northing - bounds.max.northing;
+
+  /*
+   * A margin with a floor and a ceiling.
+   *
+   * The anchor is the heading's *bottom* — it grows upward, which is what
+   * keeps it off the drawing at any zoom — so this only has to clear the
+   * dimension labels drawn outside the boundary. Too little and it sits on
+   * them; too much and a fitted view puts the heading off the top of the
+   * screen, which is how adding a title looks like it did nothing.
+   */
+  assert.ok(above > 0, 'the heading does not clear the drawing at all');
+  assert.ok(above < height * 0.25, `the heading is ${above}m above a ${height}m plan`);
 });
 
 test('a note does not land underneath the title block', () => {

@@ -517,6 +517,8 @@ export function AISheet({ onOpenPanel, onSelectTool }: AISheetProps) {
           ...(intent.title ? { title: true } : {}),
           ...(intent.representativeFraction ? { representativeFraction: true } : {}),
           ...(intent.scaleBar ? { scaleBar: true } : {}),
+          ...(intent.origin ? { origin: true } : {}),
+          ...(intent.area ? { area: true } : {}),
         };
 
         const existing = state.model.titleBlock;
@@ -533,6 +535,8 @@ export function AISheet({ onOpenPanel, onSelectTool }: AISheetProps) {
                 title: parts.title ?? false,
                 representativeFraction: parts.representativeFraction ?? false,
                 scaleBar: parts.scaleBar ?? false,
+                origin: parts.origin ?? false,
+                area: parts.area ?? false,
               },
             ),
           });

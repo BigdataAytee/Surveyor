@@ -459,14 +459,23 @@
 }
 
 .annotation__text--title {
-  font-size: 14px;
-  font-weight: 600;
+  font-size: 15px;
+  font-weight: 700;
+  /* Small caps, which is how a plan's heading is lettered. */
+  letter-spacing: 0.02em;
 }
 
-.annotation__plate {
-  fill: var(--surface);
-  fill-opacity: 0.86;
-  stroke: var(--border);
+/*
+ * The rule under each heading line.
+ *
+ * A survey plan underlines each statement in its heading — the title, the
+ * scale, the origin, the area — because there is no box separating them and
+ * the underline is what says where one claim ends and the next begins. It is
+ * the plan's own convention, not decoration, which is why it is drawn at the
+ * text's width rather than at some fixed length.
+ */
+.annotation__rule {
+  stroke: var(--ink);
   stroke-width: 1px;
 }
 

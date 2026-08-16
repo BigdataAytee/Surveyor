@@ -9,6 +9,8 @@
 
 import { useCallback, useEffect, useMemo, useState } from 'react';
 
+import type { TitleBlockPart, TitleScaleBlock } from '@surveyor/contracts';
+
 import {
   chooseScale,
   contextFor,
@@ -52,6 +54,7 @@ import { SyncStatus } from '../ui/SyncStatus.js';
 import { clearAllData, launchedAfterErase, loadPreferences } from '../state/preferences.js';
 import { useAuth } from '../auth/AuthGate.js';
 import { FadeIn } from '../ui/motion.js';
+import { titleBlockPart } from '../state/annotations.js';
 import { useProject } from '../state/store.js';
 import './workspace.css';
 
@@ -455,6 +458,25 @@ export function Workspace() {
                 ...(state.model.textBoxes ? { textBoxes: state.model.textBoxes } : {}),
                 title: state.model.metadata.siteAddress ?? 'Untitled plan',
                 denominator: planScale,
+                /*
+                 * The origin, worded the way a plan words it.
+                 *
+                 * The CRS's own name, not a restatement of it — this is the
+                 * line a surveyor re-establishes the plot from, so it has to
+                 * say exactly what the survey was measured on.
+                 */
+                origin: state.model.crs.name,
+                /*
+                 * The area, from the engine, or null when there is nothing
+                 * closed to measure. Null rather than "0 sq m", because a plan
+                 * stating an area of zero is worse than one stating none.
+                 */
+                area:
+                  pipeline.ok && pipeline.rings[0]
+                    ? `${pipeline.rings[0].area.toFixed(3)} SQ ${
+                        UNIT_ABBREVIATION[state.model.crs.units] === 'm' ? 'MTS' : 'FT'
+                      }`
+                    : null,
               }}
               onDrawPoint={(at) => dispatch({ type: 'add-boundary-point', at })}
               onSelect={(id) => dispatch({ type: 'select', id })}
@@ -472,13 +494,43 @@ export function Workspace() {
                  * error because it looks like the drag failed.
                  */
                 const id = state.selectedId;
-                if (id && state.model.titleBlock?.id === id) {
+                const block = state.model.titleBlock;
+
+                /*
+                 * One line of the heading, moved on its own.
+                 *
+                 * Each part carries its own offset from the heading's anchor,
+                 * so dragging the scale bar moves the scale bar and leaves the
+                 * title where it was. Absent means "wherever the stack puts
+                 * it", which is why a heading nobody has rearranged stays tidy.
+                 */
+                const part = titleBlockPart(block, id);
+                if (block && part) {
+                  const current = block.offsets?.[part];
+                  dispatch({
+                    type: 'update-title-block',
+                    patch: {
+                      offsets: {
+                        ...block.offsets,
+                        [part]: {
+                          de: (current?.de ?? 0) + by.de,
+                          dn: (current?.dn ?? 0) + by.dn,
+                        },
+                      },
+                    },
+                  });
+                  return;
+                }
+
+                // The heading as a whole, when something selected it by its
+                // own id rather than by one of its parts.
+                if (id && block?.id === id) {
                   dispatch({
                     type: 'update-title-block',
                     patch: {
                       at: {
-                        easting: state.model.titleBlock.at.easting + by.de,
-                        northing: state.model.titleBlock.at.northing + by.dn,
+                        easting: block.at.easting + by.de,
+                        northing: block.at.northing + by.dn,
                       },
                     },
                   });
@@ -1020,6 +1072,24 @@ function TabButton({
   );
 }
 
+/** What each line of the heading is called, when one of them is selected. */
+const PART_NAMES: Readonly<Record<TitleBlockPart, string>> = {
+  title: 'Plan title',
+  fraction: 'Scale',
+  bar: 'Scale bar',
+  origin: 'Origin',
+  area: 'Area',
+};
+
+/** Which flag hides each line, so Delete removes the line and not the heading. */
+const PART_FLAGS: Readonly<Record<TitleBlockPart, keyof TitleScaleBlock>> = {
+  title: 'showTitle',
+  fraction: 'showRepresentativeFraction',
+  bar: 'showScaleBar',
+  origin: 'showOrigin',
+  area: 'showArea',
+};
+
 /**
  * B.15: the toolbar shows only what applies to the current selection. Nothing
  * selected offers the drawing tools; a selected object offers its own actions.
@@ -1051,14 +1121,28 @@ function ContextualToolbar({
    * geometry, and a note has none — offering a button that quietly does
    * nothing is worse than not offering it.
    */
+  const part = titleBlockPart(state.model.titleBlock, selectedId);
   const annotation =
     selectedId === null
       ? null
-      : state.model.titleBlock?.id === selectedId
-        ? ({ kind: 'Title block', remove: { type: 'remove-title-block' } } as const)
-        : (state.model.textBoxes ?? []).some((box) => box.id === selectedId)
-          ? ({ kind: 'Text note', remove: { type: 'remove-text-box', id: selectedId } } as const)
-          : null;
+      : part
+        ? /*
+           * Named for the line that was tapped, and Delete removes that line.
+           *
+           * Each line is its own object, so "Plan heading" would be wrong
+           * about what is selected — and deleting the whole heading because
+           * somebody tapped Delete on the scale bar would be a small disaster
+           * with a plausible-looking button in front of it.
+           */
+          ({
+            kind: PART_NAMES[part],
+            remove: { type: 'update-title-block', patch: { [PART_FLAGS[part]]: false } },
+          } as const)
+        : state.model.titleBlock?.id === selectedId
+          ? ({ kind: 'Plan heading', remove: { type: 'remove-title-block' } } as const)
+          : (state.model.textBoxes ?? []).some((box) => box.id === selectedId)
+            ? ({ kind: 'Text note', remove: { type: 'remove-text-box', id: selectedId } } as const)
+            : null;
 
   if (annotation) {
     return (

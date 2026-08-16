@@ -239,17 +239,54 @@ export interface FreeTextBox {
  * and that is also what makes the assistant safe to let near it: it fills in
  * what is absent and never touches what is present.
  */
+/**
+ * One line of the header, addressable on its own.
+ *
+ * They are parts rather than one object because that is how a survey plan is
+ * actually laid out: the title, the stated scale, the bar, the origin and the
+ * area are separate statements, each on its own underlined line, and a
+ * surveyor moves and shows them individually. Drawing them inside a single
+ * bordered plate — which is what this was before — is a CAD-tool habit, not
+ * how a lodged plan looks.
+ */
+export type TitleBlockPart = 'title' | 'fraction' | 'bar' | 'origin' | 'area';
+
+/**
+ * The plan's heading: what it is, at what scale, on what origin, of what area.
+ *
+ * Modelled on a real Nigerian survey plan, where these sit centred above the
+ * drawing as separate underlined lines rather than in a box. `at` is where the
+ * heading starts — the centre of its first line — and each part stacks beneath
+ * it unless it has been given an offset of its own.
+ */
 export interface TitleScaleBlock {
   readonly id: string;
   readonly at: Coordinates;
   readonly showTitle: boolean;
   readonly showRepresentativeFraction: boolean;
   readonly showScaleBar: boolean;
+  /**
+   * The coordinate system the survey was measured on, as the plan states it —
+   * "ORIGIN:- UTM ZONE 32". On a Nigerian plan this is not decoration: a
+   * bearing and a distance mean nothing without the origin they were measured
+   * from, and a plan that omits it cannot be re-established on the ground.
+   */
+  readonly showOrigin?: boolean;
+  /** The computed area, stated the way a plan states it. */
+  readonly showArea?: boolean;
   /** Overrides the site address. Present means the surveyor typed it. */
   readonly title?: string;
   readonly subtitle?: string;
   /** The denominator of 1:N. Present means the surveyor chose the scale. */
   readonly scaleDenominator?: number;
+  /**
+   * Where a part sits relative to the heading, when it has been moved on its
+   * own. Absent means "wherever the stack puts it" — so a heading nobody has
+   * rearranged stays tidy, and one that has been rearranged stays rearranged.
+   */
+  readonly offsets?: {
+    readonly [K in TitleBlockPart]?: { readonly de: number; readonly dn: number };
+  };
   readonly style?: TextStyle;
   readonly provenance: Provenance;
 }

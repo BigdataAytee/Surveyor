@@ -8,7 +8,13 @@
  * caller builds one of these itself.
  */
 
-import type { Coordinates, FreeTextBox, SurveyDataModel, TitleScaleBlock } from '@surveyor/contracts';
+import type {
+  Coordinates,
+  FreeTextBox,
+  SurveyDataModel,
+  TitleBlockPart,
+  TitleScaleBlock,
+} from '@surveyor/contracts';
 
 /** Ids that read as what they are when they turn up in a selection. */
 function id(prefix: string): string {
@@ -22,8 +28,9 @@ function id(prefix: string): string {
  * bug: a note created straight after a title block landed underneath its
  * plate, where it could not be tapped and looked like nothing had happened.
  *
- *   - A title block goes below and left of the drawing's extent, which is
- *     where it belongs on a sheet and where it obscures nothing.
+ *   - The heading goes *above* the drawing, horizontally centred on it, which
+ *     is where a survey plan puts it — the title, the scale, the origin and
+ *     the area are read before the drawing, not after it.
  *   - A note goes *inside* the extent, near the top-left, because a note is
  *     about a place on the plan — "fence in poor repair" belongs by the fence.
  *     It is dragged there; it starts somewhere immediately visible.
@@ -45,7 +52,19 @@ export function annotationAnchor(
   const margin = Math.max(height * 0.08, 2);
 
   if (kind === 'title-block') {
-    return { easting: bounds.min.easting, northing: bounds.min.northing - margin };
+    /*
+     * Centred on the drawing, a little above it.
+     *
+     * This is the *bottom* of the heading, not the top: it grows upward from
+     * here — see `TitleBlockMark` — which is what stops it reaching the
+     * drawing at any zoom. So this margin only has to clear the dimension
+     * labels drawn outside the boundary, and a large one would push the
+     * heading off the top of a fitted view for no reason.
+     */
+    return {
+      easting: (bounds.min.easting + bounds.max.easting) / 2,
+      northing: bounds.max.northing + Math.max(height * 0.1, margin),
+    };
   }
 
   /*
@@ -76,6 +95,8 @@ export function makeTitleBlock(
     readonly title?: boolean;
     readonly representativeFraction?: boolean;
     readonly scaleBar?: boolean;
+    readonly origin?: boolean;
+    readonly area?: boolean;
   } = {},
 ): TitleScaleBlock {
   return {
@@ -84,6 +105,14 @@ export function makeTitleBlock(
     showTitle: parts.title ?? true,
     showRepresentativeFraction: parts.representativeFraction ?? true,
     showScaleBar: parts.scaleBar ?? true,
+    /*
+     * Origin and area default on, because on a survey plan they are not
+     * optional extras. A bearing and a distance mean nothing without the
+     * origin they were measured from, and the area is what most plans exist
+     * to state — a heading without them is not a survey plan's heading.
+     */
+    showOrigin: parts.origin ?? true,
+    showArea: parts.area ?? true,
     /*
      * `user-confirmed`, because a title block is not a claim about the ground.
      * It restates what the plan already says, and marking it `ai-suggested`
@@ -115,11 +144,32 @@ export function withParts(
     readonly title?: boolean;
     readonly representativeFraction?: boolean;
     readonly scaleBar?: boolean;
+    readonly origin?: boolean;
+    readonly area?: boolean;
   },
 ): Partial<TitleScaleBlock> {
   return {
     ...(parts.title ? { showTitle: true } : {}),
     ...(parts.representativeFraction ? { showRepresentativeFraction: true } : {}),
     ...(parts.scaleBar ? { showScaleBar: true } : {}),
+    ...(parts.origin ? { showOrigin: true } : {}),
+    ...(parts.area ? { showArea: true } : {}),
   };
+}
+
+/** The part of a heading an id refers to, or null if it is not one. */
+export function titleBlockPart(
+  block: TitleScaleBlock | undefined,
+  id: string | null,
+): TitleBlockPart | null {
+  if (!block || !id) return null;
+  const [blockId, part] = id.split(':');
+  if (blockId !== block.id) return null;
+  return part === 'title' ||
+    part === 'fraction' ||
+    part === 'bar' ||
+    part === 'origin' ||
+    part === 'area'
+    ? part
+    : null;
 }

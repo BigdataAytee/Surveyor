@@ -44,6 +44,10 @@ export type Intent =
       readonly title?: boolean;
       readonly representativeFraction?: boolean;
       readonly scaleBar?: boolean;
+      /** "ORIGIN:- …", the system the survey was measured on. */
+      readonly origin?: boolean;
+      /** "AREA:- …", computed by the engine and never by the assistant. */
+      readonly area?: boolean;
     }
   | { readonly kind: 'show'; readonly elementId: string }
   | { readonly kind: 'open'; readonly panel: PanelName }
@@ -1079,17 +1083,27 @@ export function titleScaleOffer(ctx: AssistantContext, denominator: number): Ass
     text:
       `Your boundary checks out${area === undefined ? '' : ` — ${Math.round(area)} m²`}. ` +
       `At this size the plan fits a sheet at 1:${denominator.toLocaleString('en-GB')}. ` +
-      'Shall I put the heading and scale on it? You can edit any of it afterwards, ' +
-      'and anything you type stays yours.',
+      'Shall I put the heading on it — title, scale, scale bar, origin and ' +
+      'area, as separate lines above the drawing? Each one can be moved or ' +
+      'turned off afterwards, and anything you type stays yours.',
     actions: [
       {
         id: nextId('act'),
-        label: 'Add all three',
+        /*
+         * "The whole heading", not "all three".
+         *
+         * There are five lines, and a label that counts them is a label that
+         * has to be changed every time the heading gains one — which is
+         * exactly how a button ends up lying about what it does.
+         */
+        label: 'Add the whole heading',
         intent: {
           kind: 'add-title-block',
           title: true,
           representativeFraction: true,
           scaleBar: true,
+          origin: true,
+          area: true,
         },
         tone: 'primary',
       },
@@ -1108,6 +1122,11 @@ export function titleScaleOffer(ctx: AssistantContext, denominator: number): Ass
         label: 'Add scale bar',
         intent: { kind: 'add-title-block', scaleBar: true },
       },
+      {
+        id: nextId('act'),
+        label: 'Add origin & area',
+        intent: { kind: 'add-title-block', origin: true, area: true },
+      },
     ],
   };
 }
@@ -1123,20 +1142,55 @@ export function titleScaleOffer(ctx: AssistantContext, denominator: number): Ass
 export function titleScaleIntent(question: string): Intent | null {
   const text = question.toLowerCase();
 
-  const wantsTitle = /\btitle\b|\bheading\b/.test(text);
+  /*
+   * "heading" means the whole thing, "title" means the title line.
+   *
+   * They were treated as synonyms, which was fine when the heading *was* the
+   * title. Now that it is five lines, someone asking for "the heading" is
+   * asking for all of it and someone asking for "the title" is not.
+   */
+  const wantsWhole = /\bheading\b|\btitle block\b/.test(text);
+  const wantsTitle = /\btitle\b/.test(text) && !/\btitle block\b/.test(text);
   const wantsFraction = /\brep(resentative)?\.? ?fraction\b|\b1\s*:\s*\d/.test(text);
   const wantsBar = /\bscale ?bar\b|\bbar scale\b/.test(text);
   // "add the scale" on its own means both ways of stating it, which is what a
   // surveyor asking for "the scale" means.
   const wantsScale = /\bscale\b/.test(text) && !wantsBar && !wantsFraction;
+  const wantsOrigin = /\borigin\b|\bdatum\b|\bzone\b/.test(text);
+  // "area" is a word this app uses constantly, so it only counts here when
+  // the sentence is asking to put something on the drawing.
+  const wantsArea = /\barea\b/.test(text);
 
   if (!/\b(add|put|show|insert|include|need|want)\b/.test(text)) return null;
-  if (!wantsTitle && !wantsFraction && !wantsBar && !wantsScale) return null;
+  if (
+    !wantsWhole &&
+    !wantsTitle &&
+    !wantsFraction &&
+    !wantsBar &&
+    !wantsScale &&
+    !wantsOrigin &&
+    !wantsArea
+  ) {
+    return null;
+  }
+
+  if (wantsWhole) {
+    return {
+      kind: 'add-title-block',
+      title: true,
+      representativeFraction: true,
+      scaleBar: true,
+      origin: true,
+      area: true,
+    };
+  }
 
   return {
     kind: 'add-title-block',
     ...(wantsTitle ? { title: true } : {}),
     ...(wantsFraction || wantsScale ? { representativeFraction: true } : {}),
     ...(wantsBar || wantsScale ? { scaleBar: true } : {}),
+    ...(wantsOrigin ? { origin: true } : {}),
+    ...(wantsArea ? { area: true } : {}),
   };
 }
