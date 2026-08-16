@@ -783,3 +783,40 @@
 .mapview__table td.numeric {
   text-align: right;
 }
+
+/* --- Formatting toolbars -------------------------------------------------- */
+
+.format {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+.format__row {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+}
+
+.format__label {
+  font-size: var(--text-caption);
+  color: var(--ink-secondary);
+  min-width: 3.5rem;
+}
+
+.format__swatch {
+  width: var(--touch-min, 44px);
+  height: 32px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--surface);
+  color: var(--ink-secondary);
+  font-size: var(--text-caption);
+  cursor: pointer;
+}
+
+.format__swatch.is-active {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}

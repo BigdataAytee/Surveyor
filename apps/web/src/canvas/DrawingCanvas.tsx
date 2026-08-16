@@ -20,7 +20,13 @@ import {
   useState,
 } from 'react';
 
-import type { Coordinates, PlacedLabel, SiteFeature } from '@surveyor/contracts';
+import type {
+  Coordinates,
+  FreeTextBox,
+  PlacedLabel,
+  SiteFeature,
+  TitleScaleBlock,
+} from '@surveyor/contracts';
 import {
   formatBearing,
   inverse,
@@ -44,6 +50,7 @@ import {
   type Viewport,
 } from './viewport.js';
 import { SNAP_RADIUS_PX, snapTargetsFrom, snapTolerance, targetsNear } from './snapping.js';
+import { TextBoxMark, TitleBlockMark } from './Annotations.js';
 import './canvas.css';
 
 export interface CanvasProps {
@@ -92,6 +99,21 @@ export interface CanvasProps {
    * to send it should show.
    */
   readonly onOpenMap?: () => void;
+  /**
+   * The annotation layer: the title/scale block and free text boxes.
+   *
+   * Passed in rather than read from the model, because the canvas is given a
+   * `Drawing` and knows nothing about surveys. Absent means a plan that has
+   * none, which is most of them.
+   */
+  readonly annotations?: {
+    readonly titleBlock?: TitleScaleBlock | undefined;
+    readonly textBoxes?: readonly FreeTextBox[] | undefined;
+    /** What the block prints when it does not override the title. */
+    readonly title: string;
+    /** The scale the plan is at, when the block does not state one. */
+    readonly denominator: number;
+  };
   readonly hiddenLayers?: readonly LayerId[];
   /**
    * Layers the user has locked. Drawn, and snapped to — that is most of what
@@ -158,6 +180,7 @@ export function DrawingCanvas({
   onDrawPoint,
   unit = 'm',
   onOpenMap,
+  annotations,
   hiddenLayers = [],
   lockedLayers = [],
   onMoveBy,
@@ -295,6 +318,15 @@ export function DrawingCanvas({
     [selectedId, selectedIds],
   );
 
+  /** Annotation anchors, for hit-testing. Empty on a plan that has none. */
+  const annotationTargets = useMemo(
+    () => [
+      ...(annotations?.titleBlock ? [{ id: annotations.titleBlock.id, at: annotations.titleBlock.at }] : []),
+      ...(annotations?.textBoxes ?? []).map((box) => ({ id: box.id, at: box.at })),
+    ],
+    [annotations],
+  );
+
   /**
    * Snap targets with everything the move disturbs taken out.
    *
@@ -386,7 +418,7 @@ export function DrawingCanvas({
   const raiseMenu = useCallback(
     (client: { readonly x: number; readonly y: number }, point: ScreenPoint) => {
       if (!onContextMenu || !viewport) return;
-      onContextMenu(client, hitTest(point, reachable, viewport, size));
+      onContextMenu(client, hitTest(point, reachable, viewport, size, annotationTargets));
     },
     [onContextMenu, reachable, size, viewport],
   );
@@ -421,7 +453,9 @@ export function DrawingCanvas({
         }
 
         const hit =
-          tool === 'select' && viewport ? hitTest(point, reachable, viewport, size) : null;
+          tool === 'select' && viewport
+            ? hitTest(point, reachable, viewport, size, annotationTargets)
+            : null;
 
         // Something already selected is picked up; anything else is not. A drag
         // that grabbed whatever happened to be under the finger would move
@@ -643,7 +677,7 @@ export function DrawingCanvas({
       }
       gesture.current.lastTapAt = now;
 
-      const hit = hitTest(point, reachable, viewport, size);
+      const hit = hitTest(point, reachable, viewport, size, annotationTargets);
       if (event.shiftKey && hit && onSelectMany) {
         onSelectMany([hit], true);
         return;
@@ -811,6 +845,41 @@ export function DrawingCanvas({
           <g className="layer layer--labels">
             {labels.map((label) => (
               <Label key={label.spec.id} label={label} project={project} />
+            ))}
+          </g>
+        ) : null}
+
+        {/*
+          Annotations, above everything they annotate.
+
+          Last in the document is on top in SVG, which is what a note on a
+          drawing has to be — one drawn under a boundary line is a note nobody
+          can read.
+        */}
+        {ready && annotations ? (
+          <g className="layer layer--annotations">
+            {annotations.titleBlock ? (
+              <TitleBlockMark
+                block={annotations.titleBlock}
+                project={project}
+                selectedIds={[...moving]}
+                title={annotations.title}
+                denominator={annotations.denominator}
+                unit={unit}
+                worldPerPixel={viewport ? 1 / viewport.scale : 1}
+                {...(drag && moving.has(annotations.titleBlock.id)
+                  ? { offset: drag, moving: true }
+                  : {})}
+              />
+            ) : null}
+            {(annotations.textBoxes ?? []).map((box) => (
+              <TextBoxMark
+                key={box.id}
+                box={box}
+                project={project}
+                selectedIds={[...moving]}
+                {...(drag && moving.has(box.id) ? { offset: drag, moving: true } : {})}
+              />
             ))}
           </g>
         ) : null}
@@ -1355,8 +1424,36 @@ function hitTest(
   drawing: Drawing,
   viewport: Viewport,
   size: Size,
+  /**
+   * Annotations, tested first and won by whoever is on top.
+   *
+   * They sit above the drawing, so a tap that lands on both is a tap on the
+   * annotation — anything else means a note over a boundary can be seen and
+   * not touched.
+   */
+  annotations: readonly { readonly id: string; readonly at: Coordinates }[] = [],
 ): string | null {
   let best: { id: string; rank: number; distance: number } | null = null;
+
+  for (const annotation of annotations) {
+    const p = toScreen(annotation.at, viewport, size);
+    /*
+     * A box round the anchor rather than the drawn extent. The renderer knows
+     * how wide the text is and this does not, and the two agreeing exactly
+     * matters less than the target being reachable: a generous box that is
+     * slightly wrong is a control that works, and an exact one that needs
+     * aiming is not.
+     */
+    if (
+      point.x >= p.x - 20 &&
+      point.x <= p.x + 180 &&
+      point.y >= p.y - 22 &&
+      point.y <= p.y + 60
+    ) {
+      // Rank below zero so an annotation beats every element under it.
+      consider({ id: annotation.id, rank: -1, distance: Math.hypot(p.x - point.x, p.y - point.y) });
+    }
+  }
 
   for (const layer of drawing.layers) {
     for (const element of layer.elements) {

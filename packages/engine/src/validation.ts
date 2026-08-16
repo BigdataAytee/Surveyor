@@ -45,6 +45,8 @@ export interface ValidationInput {
   readonly model: SurveyDataModel;
   readonly rings: readonly ResolvedRing[];
   readonly tolerance?: ClosureTolerance;
+  /** Proportional tolerance for a stated area against the computed one. */
+  readonly areaTolerance?: number;
 }
 
 export function validate(input: ValidationInput): ValidationReport {
@@ -59,6 +61,7 @@ export function validate(input: ValidationInput): ValidationReport {
     ...zeroLengthIssues(input.rings, unit),
     ...selfIntersectionIssues(input.rings),
     ...confidenceIssues(input.model),
+    ...areaIssues(input.model, input.rings, unit, input.areaTolerance ?? AREA_MISMATCH_TOLERANCE),
   ];
 
   return { status: statusFor(issues), issues, closure };
@@ -269,4 +272,96 @@ function confidenceIssues(model: SurveyDataModel): ValidationIssue[] {
     });
   }
   return issues;
+}
+
+// ---------------------------------------------------------------------------
+// Stated area against computed area
+// ---------------------------------------------------------------------------
+
+/**
+ * How far apart a stated and a computed area may be before it is worth saying.
+ *
+ * Proportional rather than absolute, because a square metre on a house plot is
+ * a real discrepancy and on a farm is a rounding difference. One per cent is
+ * about where a difference stops being explicable by the rounding on a deed
+ * and starts suggesting the parcel is not the one described.
+ */
+export const AREA_MISMATCH_TOLERANCE = 0.01;
+
+export interface AreaComparison {
+  readonly stated: number;
+  readonly computed: number;
+  /** Signed: positive when the computed area is the larger. */
+  readonly difference: number;
+  /** As a fraction of the stated area. */
+  readonly proportion: number;
+  readonly withinTolerance: boolean;
+}
+
+/**
+ * Compare what the deed says with what the geometry gives.
+ *
+ * Returns null when there is nothing to compare — no stated area, or no closed
+ * boundary to compute one from. That is not a problem and is not reported as
+ * one; most plans have only the computed figure.
+ */
+export function compareAreas(
+  model: SurveyDataModel,
+  rings: readonly ResolvedRing[],
+  tolerance = AREA_MISMATCH_TOLERANCE,
+): AreaComparison | null {
+  const stated = model.metadata.statedArea;
+  if (stated === undefined || !Number.isFinite(stated) || stated <= 0) return null;
+
+  const computed = rings[0]?.area;
+  if (computed === undefined || !Number.isFinite(computed) || computed <= 0) return null;
+
+  const difference = computed - stated;
+  const proportion = Math.abs(difference) / stated;
+
+  return {
+    stated,
+    computed,
+    difference,
+    proportion,
+    withinTolerance: proportion <= tolerance,
+  };
+}
+
+function areaIssues(
+  model: SurveyDataModel,
+  rings: readonly ResolvedRing[],
+  unit: string,
+  tolerance: number,
+): readonly ValidationIssue[] {
+  const comparison = compareAreas(model, rings, tolerance);
+  if (!comparison || comparison.withinTolerance) return [];
+
+  const percent = (comparison.proportion * 100).toFixed(1);
+  const larger = comparison.difference > 0 ? 'larger' : 'smaller';
+
+  return [
+    {
+      code: 'area-mismatch',
+      // Needs review rather than an error: a difference is a question, and
+      // plenty of them have good answers — a deed rounded to the nearest
+      // hundred, an occupation line that is not the title line. What it must
+      // never be is invisible.
+      severity: 'needs-review',
+      message:
+        `The area from your survey is ${percent}% ${larger} than the ` +
+        `${format(comparison.stated, unit)} on record. Check which one this ` +
+        'plan should state before you issue it.',
+      subjects: rings[0] ? [rings[0].ringId] : [],
+      options: ['confirm', 'adjust'],
+      detail:
+        `stated ${format(comparison.stated, unit)}, ` +
+        `computed ${format(comparison.computed, unit)}, ` +
+        `difference ${format(Math.abs(comparison.difference), unit)}`,
+    },
+  ];
+}
+
+function format(area: number, unit: string): string {
+  return `${area.toFixed(area < 100 ? 2 : 0)} ${unit}²`;
 }

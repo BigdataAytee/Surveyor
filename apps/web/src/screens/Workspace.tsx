@@ -9,7 +9,14 @@
 
 import { useCallback, useEffect, useMemo, useState } from 'react';
 
-import { contextFor, placeLabels, UNIT_ABBREVIATION, type LayerId } from '@surveyor/engine';
+import {
+  chooseScale,
+  contextFor,
+  placeLabels,
+  sheetDimensions,
+  UNIT_ABBREVIATION,
+  type LayerId,
+} from '@surveyor/engine';
 
 import { DrawingCanvas, type CanvasTool } from '../canvas/DrawingCanvas.js';
 import { AddSheet } from '../panels/AddSheet.js';
@@ -136,6 +143,31 @@ export function Workspace() {
   useEffect(() => {
     document.documentElement.dataset.theme = theme;
   }, [theme]);
+
+  /**
+   * The scale this plan would be drawn at.
+   *
+   * Computed from the plan's own extent through the same engine function the
+   * composer uses, so the figure on the canvas and the figure on the exported
+   * sheet cannot disagree — which is the one thing a stated scale must never
+   * do. The title block overrides it if the surveyor has chosen one.
+   */
+  const planScale = useMemo(() => {
+    const stated = state.model.titleBlock?.scaleDenominator;
+    if (stated !== undefined) return stated;
+
+    if (!pipeline.ok) return 500;
+
+    const { min, max } = pipeline.drawing.bounds;
+    const width = max.easting - min.easting;
+    const height = max.northing - min.northing;
+    // A plan with nothing on it has no extent to scale. 1:500 is the common
+    // suburban default and is what the blank sheet says until there is a
+    // boundary to compute from.
+    if (!(width > 0) && !(height > 0)) return 500;
+
+    return chooseScale({ width, height }, sheetDimensions('A4', 'portrait'));
+  }, [pipeline, state.model.titleBlock?.scaleDenominator]);
 
   /*
    * Say that the erase happened.
@@ -418,11 +450,58 @@ export function Workspace() {
               tool={tool}
               unit={UNIT_ABBREVIATION[state.model.crs.units]}
               onOpenMap={() => setPanel('map')}
+              annotations={{
+                ...(state.model.titleBlock ? { titleBlock: state.model.titleBlock } : {}),
+                ...(state.model.textBoxes ? { textBoxes: state.model.textBoxes } : {}),
+                title: state.model.metadata.siteAddress ?? 'Untitled plan',
+                denominator: planScale,
+              }}
               onDrawPoint={(at) => dispatch({ type: 'add-boundary-point', at })}
               onSelect={(id) => dispatch({ type: 'select', id })}
               hiddenLayers={LAYER_NAMES.filter((l) => !layers[l.id].visible).map((l) => l.id)}
               lockedLayers={LAYER_NAMES.filter((l) => layers[l.id].locked).map((l) => l.id)}
-              onMoveBy={(by) => dispatch({ type: 'transform', transform: { kind: 'move', by } })}
+              onMoveBy={(by) => {
+                /*
+                 * An annotation moves itself; everything else moves through the
+                 * transform, which is what touches survey geometry.
+                 *
+                 * Routed here rather than in the canvas because only this layer
+                 * knows what the selected id *is*. Sending a text box through
+                 * `transform` would be harmless — it would find no geometry to
+                 * move — and would also do nothing, which is worse than an
+                 * error because it looks like the drag failed.
+                 */
+                const id = state.selectedId;
+                if (id && state.model.titleBlock?.id === id) {
+                  dispatch({
+                    type: 'update-title-block',
+                    patch: {
+                      at: {
+                        easting: state.model.titleBlock.at.easting + by.de,
+                        northing: state.model.titleBlock.at.northing + by.dn,
+                      },
+                    },
+                  });
+                  return;
+                }
+
+                const box = (state.model.textBoxes ?? []).find((candidate) => candidate.id === id);
+                if (box) {
+                  dispatch({
+                    type: 'update-text-box',
+                    id: box.id,
+                    patch: {
+                      at: {
+                        easting: box.at.easting + by.de,
+                        northing: box.at.northing + by.dn,
+                      },
+                    },
+                  });
+                  return;
+                }
+
+                dispatch({ type: 'transform', transform: { kind: 'move', by } });
+              }}
               onPlaceDimension={(from, to) => dispatch({ type: 'add-dimension', from, to })}
               onContextMenu={(at, id) => {
                 // Right-clicking an unselected object selects it first, which
@@ -639,7 +718,10 @@ export function Workspace() {
         title="Add to the drawing"
         subtitle="Buildings, fences, walls, trees, levels and notes"
       >
-        <AddSheet onClose={() => setPanel(null)} />
+        <AddSheet
+          onClose={() => setPanel(null)}
+          onEditSelection={() => openPanel('properties')}
+        />
       </BottomSheet>
 
       <BottomSheet
@@ -955,12 +1037,66 @@ function ContextualToolbar({
   readonly onClear: () => void;
   readonly onOpenProperties: () => void;
 }) {
-  const { pipeline, dispatch } = useProject();
+  const { state, pipeline, dispatch } = useProject();
   if (selectedIds.length === 0) return null;
 
   // A multi-selection has no single element to describe, but it is exactly
   // when the editing tools matter most — so the bar appears either way.
   const element = selectedId ? selectedElement(pipeline, selectedId) : undefined;
+
+  /*
+   * Annotations are not drawing elements, so `element` is undefined for them
+   * and the fall-through below would call a selected note "1 objects". They
+   * also get no Edit button: the modify tools move, rotate and offset survey
+   * geometry, and a note has none — offering a button that quietly does
+   * nothing is worse than not offering it.
+   */
+  const annotation =
+    selectedId === null
+      ? null
+      : state.model.titleBlock?.id === selectedId
+        ? ({ kind: 'Title block', remove: { type: 'remove-title-block' } } as const)
+        : (state.model.textBoxes ?? []).some((box) => box.id === selectedId)
+          ? ({ kind: 'Text note', remove: { type: 'remove-text-box', id: selectedId } } as const)
+          : null;
+
+  if (annotation) {
+    return (
+      <FadeIn className="contextbar">
+        <div className="contextbar__inner">
+          <span className="contextbar__title">
+            {annotation.kind}
+            <span className="contextbar__id numeric">{selectedId}</span>
+          </span>
+          <div className="contextbar__actions">
+            <Button size="sm" variant="primary" onClick={onOpenProperties}>
+              Properties
+            </Button>
+            <Button
+              size="sm"
+              variant="danger"
+              onClick={() => {
+                dispatch(annotation.remove);
+                onClear();
+              }}
+            >
+              Delete
+            </Button>
+            <Button
+              size="sm"
+              variant="ghost"
+              onClick={onClear}
+              aria-label="Clear selection"
+              title="Clear selection (Esc)"
+            >
+              ✕
+            </Button>
+          </div>
+        </div>
+      </FadeIn>
+    );
+  }
+
   // Dimension elements are named `dim_…_line` / `_witness_from` / `_witness_to`
   // and all share the boundary-segment subject shape, so the id is what tells
   // them apart from a real boundary line.

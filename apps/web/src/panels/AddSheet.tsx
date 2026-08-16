@@ -20,6 +20,7 @@ import { UNIT_ABBREVIATION, boundsOf, polarDisplacement, translate } from '@surv
 
 import { Button, Card, Field, Segmented, TextInput } from '../ui/primitives.js';
 import { useProject } from '../state/store.js';
+import { annotationAnchor, makeTextBox, makeTitleBlock } from '../state/annotations.js';
 import './panels.css';
 
 /** What can be added, and how each one is built. */
@@ -45,7 +46,21 @@ const KINDS: readonly Kind[] = [
   { kind: 'annotation', label: 'Note on the plan', shape: 'marker', hint: 'Free text at a point' },
 ];
 
-export function AddSheet({ onClose }: { readonly onClose: () => void }) {
+export function AddSheet({
+  onClose,
+  onEditSelection,
+}: {
+  readonly onClose: () => void;
+  /**
+   * Open the panel that edits whatever was just selected.
+   *
+   * A new note arrives saying "New note" and a new title block arrives with
+   * nothing filled in, so the next thing to happen is always typing. Closing
+   * the panel and leaving the surveyor to find the thing on the drawing and
+   * tap it is a step that exists for no reason.
+   */
+  readonly onEditSelection: () => void;
+}) {
   const { state, dispatch, pipeline } = useProject();
   const [selected, setSelected] = useState<FeatureKind>('building');
   const [status, setStatus] = useState<FeatureStatus>('existing');
@@ -245,6 +260,53 @@ export function AddSheet({ onClose }: { readonly onClose: () => void }) {
           <p className="panel__body">{error}</p>
         </Card>
       ) : null}
+
+      {/*
+        Annotation, beside the things on the ground.
+
+        In this panel because this is where the app adds objects, and a note or
+        a title block is another object — putting them behind a different
+        control would be a second way to do the same thing.
+      */}
+      <Field label="Annotation" hint="Not survey data — text on the sheet, and the plan’s heading">
+        <div className="tools__row">
+          <Button
+            full
+            onClick={() => {
+              const at = annotationAnchor(
+                state.model,
+                pipeline.ok ? pipeline.drawing.bounds : null,
+                (state.model.textBoxes ?? []).length,
+                'text',
+              );
+              const box = makeTextBox(at, 'New note');
+              dispatch({ type: 'add-text-box', box });
+              // Selected on arrival, so the panel that opens next is the one
+              // for typing what it says.
+              dispatch({ type: 'select', id: box.id });
+              onEditSelection();
+            }}
+          >
+            Text note
+          </Button>
+          <Button
+            full
+            disabled={state.model.titleBlock !== undefined}
+            onClick={() => {
+              const at = annotationAnchor(
+                state.model,
+                pipeline.ok ? pipeline.drawing.bounds : null,
+              );
+              const block = makeTitleBlock(at);
+              dispatch({ type: 'add-title-block', block });
+              dispatch({ type: 'select', id: block.id });
+              onEditSelection();
+            }}
+          >
+            {state.model.titleBlock ? 'Title block added' : 'Title & scale'}
+          </Button>
+        </div>
+      </Field>
 
       <div className="panel__footer panel__footer--stacked">
         <Button

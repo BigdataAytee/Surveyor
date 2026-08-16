@@ -18,7 +18,15 @@ export type ValidationCode =
   | 'zero-length-segment'
   | 'required-label-dropped'
   | 'label-subject-unresolved'
-  | 'low-confidence-extraction';
+  | 'low-confidence-extraction'
+  /**
+   * A stated area and the computed one disagree.
+   *
+   * Reported, never resolved. Which of the two is right is a question about
+   * the deed, the fence and the ground — not about arithmetic — and an app
+   * that picked one would be answering a question it cannot see.
+   */
+  | 'area-mismatch';
 
 /**
  * What the user may do about an issue. The Validation Engine never picks for

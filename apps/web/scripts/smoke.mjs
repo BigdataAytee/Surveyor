@@ -788,6 +788,183 @@ for (const [name, viewport] of [
   await shot(page, 'guidance');
   await page.close();
 }
+
+// --- Annotations: the title block, the scale bar and free text --------------
+
+/*
+ * The annotation layer end to end, through the interface rather than the
+ * reducer. Three things are worth a browser to check and cannot be checked
+ * anywhere else:
+ *
+ *   - the assistant offers the heading once, and its card and the typed
+ *     command land in the same place;
+ *   - the scale bar is drawn at the drawing's real scale, so measuring it on
+ *     a printed sheet gives the number the plan claims;
+ *   - none of it touches the survey.
+ */
+
+{
+  const page = await open('annotations', PHONE);
+
+  /** Everything about the stored survey that is not annotation or metadata. */
+  const survey = () =>
+    page.evaluate(() => {
+      const out = {};
+      // Sorted, because `Object.keys(localStorage)` is not order-stable once
+      // keys have been rewritten — an unsorted read compares two orderings
+      // and reports a change that never happened.
+      for (const key of Object.keys(localStorage).sort()) {
+        try {
+          const plan = JSON.parse(localStorage.getItem(key));
+          if (!plan?.points) continue;
+          out[key] = JSON.stringify({
+            points: plan.points,
+            boundary: plan.boundary,
+            siteFeatures: plan.siteFeatures,
+            crs: plan.crs,
+          });
+        } catch {
+          /* not a stored plan */
+        }
+      }
+      return out;
+    });
+
+  const before = await survey();
+  expect(Object.keys(before).length > 0, 'annotations: no stored survey to compare against');
+
+  // The offer, on the assistant's own initiative once the boundary validates.
+  await page.getByRole('button', { name: 'Assistant' }).click();
+  await page.waitForTimeout(900);
+  const offer = page.getByRole('button', { name: 'Add all three' }).locator('visible=true');
+  expect((await offer.count()) > 0, 'annotations: no offer to put the heading on the plan');
+
+  // The typed command, which must reach the same handler as that button.
+  const input = page
+    .getByLabel('Ask the assistant, or paste survey data')
+    .locator('visible=true')
+    .first();
+  await input.fill('add the title and scale bar');
+  await page.getByRole('button', { name: 'Send' }).locator('visible=true').first().click();
+  await page.waitForTimeout(900);
+  await page.keyboard.press('Escape');
+  await page.waitForTimeout(500);
+
+  expect(
+    (await page.locator('.annotation--title').count()) === 1,
+    'annotations: the typed command did not put a title block on the drawing',
+  );
+
+  // The title came from the plan, because nobody has typed one.
+  const titleText = await page
+    .locator('.annotation--title text')
+    .evaluateAll((nodes) => nodes.map((node) => node.textContent));
+  expect(
+    titleText.some((line) => /Adeola Close/.test(line ?? '')),
+    `annotations: title block does not name the plan — ${JSON.stringify(titleText)}`,
+  );
+
+  /*
+   * The scale bar against the drawing itself.
+   *
+   * The bar says "10 m" and is some number of pixels wide. Two survey points
+   * whose separation on the ground is known are some other number of pixels
+   * apart. If those two ratios disagree, the bar is a measuring stick that
+   * lies — which is the one failure a scale bar must not have, and the reason
+   * this is checked on screen rather than in a unit test.
+   */
+  const bar = await page.evaluate(() => {
+    const line = document.querySelector('.annotation__bar line');
+    const labels = [...document.querySelectorAll('.annotation__bar-label')];
+    const markers = [...document.querySelectorAll('.element__marker')].map((node) => {
+      const box = node.getBoundingClientRect();
+      return { x: box.x + box.width / 2, y: box.y + box.height / 2 };
+    });
+    return {
+      width: line ? line.getBBox().width : null,
+      label: labels.at(-1)?.textContent ?? null,
+      markers,
+    };
+  });
+
+  expect(bar.width > 10, 'annotations: no scale bar drawn');
+  expect(/^\d+(\.\d+)?\s*m$/.test(bar.label ?? ''), `annotations: scale bar label reads "${bar.label}"`);
+  expect(bar.markers.length >= 2, 'annotations: no survey points to measure the bar against');
+
+  if (bar.width > 10 && bar.markers.length >= 2) {
+    // PT1→PT2 in the sample plan: 544800,718900 → 544832.4,718903.1.
+    const GROUND = Math.hypot(32.4, 3.1);
+    const [a, b] = bar.markers;
+    const onScreen = Math.hypot(b.x - a.x, b.y - a.y);
+    const fromDrawing = GROUND / onScreen;
+    const fromBar = Number.parseFloat(bar.label) / bar.width;
+    const disagreement = Math.abs(fromBar - fromDrawing) / fromDrawing;
+    expect(
+      disagreement < 0.02,
+      `annotations: the scale bar disagrees with the drawing by ${(disagreement * 100).toFixed(1)}%` +
+        ` (bar ${fromBar.toFixed(4)} m/px, drawing ${fromDrawing.toFixed(4)} m/px)`,
+    );
+  }
+
+  // Dragging it moves it, and moves nothing else.
+  const plate = await page.locator('.annotation--title').boundingBox();
+  await page.mouse.move(plate.x + 20, plate.y + 12);
+  await page.mouse.down();
+  await page.mouse.move(plate.x + 70, plate.y + 62, { steps: 12 });
+  await page.mouse.up();
+  await page.waitForTimeout(800);
+  const moved = await page.locator('.annotation--title').boundingBox();
+  expect(
+    Math.abs(moved.x - plate.x - 50) < 4 && Math.abs(moved.y - plate.y - 50) < 4,
+    `annotations: dragging the title block moved it to ${moved.x - plate.x}, ${moved.y - plate.y}`,
+  );
+
+  // A free text note, added, named and formatted.
+  await page.getByRole('button', { name: '+ Add' }).click();
+  await page.waitForTimeout(500);
+  await page.getByRole('button', { name: 'Text note' }).locator('visible=true').first().click();
+  await page.waitForTimeout(600);
+
+  const field = page.getByLabel('Text box contents').locator('visible=true').first();
+  expect(
+    await field.isVisible().catch(() => false),
+    'annotations: adding a note did not open the panel for typing what it says',
+  );
+  await field.fill('Fence in poor repair');
+  await page.waitForTimeout(300);
+  await page.getByRole('button', { name: 'Bold' }).locator('visible=true').first().click();
+  await page.waitForTimeout(300);
+  await page.getByRole('button', { name: 'Done' }).locator('visible=true').first().click();
+  await page.waitForTimeout(800);
+
+  const note = await page
+    .locator('.annotation--text text')
+    .evaluateAll((nodes) => nodes.map((node) => [node.textContent, node.style.fontWeight]));
+  expect(
+    note.some(([text, weight]) => text === 'Fence in poor repair' && weight === '700'),
+    `annotations: the note is not on the drawing as typed and formatted — ${JSON.stringify(note)}`,
+  );
+
+  // Selecting an annotation names it for what it is, rather than "1 objects".
+  await page.locator('.annotation--text').first().click();
+  await page.waitForTimeout(500);
+  if (await page.locator('.contextbar').isVisible()) {
+    const said = await page.locator('.contextbar__title').first().innerText();
+    expect(/Text note/i.test(said), `annotations: a selected note is called "${said}"`);
+  } else {
+    problems.push('annotations: tapping a note did not select it');
+  }
+
+  await shot(page, 'annotations');
+
+  // And after all of that, the survey is byte-for-byte what it was.
+  const after = await survey();
+  expect(
+    JSON.stringify(after) === JSON.stringify(before),
+    'annotations: annotating the plan changed the survey data',
+  );
+  await page.close();
+}
 }
 
 // --- The classifier, end to end ---------------------------------------------

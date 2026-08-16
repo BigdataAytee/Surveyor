@@ -24,11 +24,15 @@ import {
 
 import type {
   Coordinates,
+  FreeTextBox,
   LabelSpecification,
+  LineStyle,
   SiteFeature,
   SurveyDataModel,
   SurveyNote,
   SurveyPoint,
+  TextStyle,
+  TitleScaleBlock,
 } from '@surveyor/contracts';
 import { confirm } from '@surveyor/contracts';
 import {
@@ -196,6 +200,43 @@ export type Action =
    * Records, never reprojects. See the reducer case for why.
    */
   | { type: 'set-crs'; crs: SurveyDataModel['crs'] }
+  /**
+   * The title, representative fraction and scale bar, as one object.
+   *
+   * `patch` merges, so setting one field leaves the others alone — which is
+   * what "the surveyor edited the title" has to mean. A field present in the
+   * block is a field they decided; the assistant only ever fills absent ones.
+   */
+  | { type: 'add-title-block'; block: TitleScaleBlock }
+  /**
+   * A key set to `undefined` clears it, which is how a field goes back to
+   * being computed from the plan. `Partial` alone cannot express that under
+   * `exactOptionalPropertyTypes`, and the difference is the whole feature: an
+   * absent title is one the assistant may fill, and an empty string is a title
+   * that reads as blank on the sheet.
+   */
+  | {
+      type: 'update-title-block';
+      patch: { [K in keyof TitleScaleBlock]?: TitleScaleBlock[K] | undefined };
+    }
+  | { type: 'remove-title-block' }
+  | { type: 'add-text-box'; box: FreeTextBox }
+  | {
+      type: 'update-text-box';
+      id: string;
+      patch: { [K in keyof FreeTextBox]?: FreeTextBox[K] | undefined };
+    }
+  | { type: 'remove-text-box'; id: string }
+  /**
+   * How something is drawn.
+   *
+   * Its own action rather than part of `update-feature`, because that one
+   * replaces the whole feature and this must be incapable of touching
+   * geometry. A styling action that cannot reach a coordinate is a styling
+   * action nobody has to check.
+   */
+  | { type: 'set-text-style'; id: string; style: TextStyle }
+  | { type: 'set-line-style'; id: string; style: LineStyle }
   | { type: 'suggest'; suggestion: Suggestion }
   | { type: 'accept-suggestion'; id: string; at: string }
   | { type: 'dismiss-suggestion'; id: string }
@@ -817,6 +858,81 @@ export function reducer(state: ProjectState, action: Action): ProjectState {
     case 'set-crs':
       return commit(state, { ...state.model, crs: action.crs });
 
+    case 'add-title-block':
+      return commit(state, { ...state.model, titleBlock: action.block });
+
+    case 'update-title-block': {
+      const current = state.model.titleBlock;
+      if (!current) return state;
+      return commit(state, {
+        ...state.model,
+        titleBlock: mergePatch(current, action.patch) as TitleScaleBlock,
+      });
+    }
+
+    case 'remove-title-block': {
+      if (!state.model.titleBlock) return state;
+      const { titleBlock: _removed, ...rest } = state.model;
+      return commit(state, rest);
+    }
+
+    case 'add-text-box':
+      return commit(state, {
+        ...state.model,
+        textBoxes: [...(state.model.textBoxes ?? []), action.box],
+      });
+
+    case 'update-text-box':
+      return commit(state, {
+        ...state.model,
+        textBoxes: (state.model.textBoxes ?? []).map((box) =>
+          box.id === action.id ? (mergePatch(box, action.patch) as FreeTextBox) : box,
+        ),
+      });
+
+    case 'remove-text-box':
+      return commit(state, {
+        ...state.model,
+        textBoxes: (state.model.textBoxes ?? []).filter((box) => box.id !== action.id),
+      });
+
+    /*
+     * Styling, on whatever the id belongs to.
+     *
+     * Deliberately a merge onto the existing style and nothing else. Nothing in
+     * these two cases can reach a coordinate, a provenance tag or a label
+     * position — which is the guarantee the architecture asks for, made
+     * structural rather than promised.
+     */
+    case 'set-text-style':
+      return commit(state, {
+        ...state.model,
+        ...(state.model.titleBlock?.id === action.id
+          ? {
+              titleBlock: {
+                ...state.model.titleBlock,
+                style: { ...state.model.titleBlock.style, ...action.style },
+              },
+            }
+          : {}),
+        textBoxes: (state.model.textBoxes ?? []).map((box) =>
+          box.id === action.id ? { ...box, style: { ...box.style, ...action.style } } : box,
+        ),
+        notes: state.model.notes.map((note) =>
+          note.id === action.id ? { ...note, style: { ...note.style, ...action.style } } : note,
+        ),
+      });
+
+    case 'set-line-style':
+      return commit(state, {
+        ...state.model,
+        siteFeatures: state.model.siteFeatures.map((feature) =>
+          feature.id === action.id
+            ? { ...feature, lineStyle: { ...feature.lineStyle, ...action.style } }
+            : feature,
+        ),
+      });
+
     case 'suggest':
       return { ...state, suggestions: [...state.suggestions, action.suggestion] };
 
@@ -970,6 +1086,23 @@ export const EMPTY_MODEL: SurveyDataModel = {
   siteFeatures: [],
   notes: [],
 };
+
+/**
+ * Merge a patch, treating an explicit `undefined` as "remove this".
+ *
+ * The distinction matters wherever absence has a meaning. On the title block
+ * it is the difference between a title the surveyor chose and one the plan
+ * supplies — and therefore between a field the assistant leaves alone and one
+ * it may fill in.
+ */
+function mergePatch<T extends object>(base: T, patch: object): T {
+  const next: Record<string, unknown> = { ...(base as Record<string, unknown>) };
+  for (const [key, value] of Object.entries(patch as Record<string, unknown>)) {
+    if (value === undefined) delete next[key];
+    else next[key] = value;
+  }
+  return next as T;
+}
 
 /**
  * Nothing on the sheet and nothing typed about it.

@@ -31,6 +31,20 @@ import type { Suggestion } from '../state/store.js';
 export type Intent =
   | { readonly kind: 'suggest-building'; readonly label: string }
   | { readonly kind: 'suggest-note' }
+  /**
+   * Put the title, the representative fraction or the scale bar on the sheet.
+   *
+   * One intent with three flags rather than three intents, because they are
+   * one object and the card offers them together. Every flag is additive: it
+   * can turn a part on and never off, so pressing "Add scale bar" on a block
+   * that already has a title leaves the title exactly as it was.
+   */
+  | {
+      readonly kind: 'add-title-block';
+      readonly title?: boolean;
+      readonly representativeFraction?: boolean;
+      readonly scaleBar?: boolean;
+    }
   | { readonly kind: 'show'; readonly elementId: string }
   | { readonly kind: 'open'; readonly panel: PanelName }
   | { readonly kind: 'explain'; readonly topic: ExplainTopic }
@@ -1039,4 +1053,90 @@ export function proposeNote(): Suggestion {
 
 function capitalise(word: string): string {
   return word.charAt(0).toUpperCase() + word.slice(1);
+}
+
+// ---------------------------------------------------------------------------
+// The title and scale offer
+// ---------------------------------------------------------------------------
+
+/**
+ * Offer the title, the representative fraction and the scale bar.
+ *
+ * Shown once, when a boundary first validates — the moment the plan becomes a
+ * plan and the moment the scale becomes computable. Before that there is no
+ * extent to derive a scale from, and offering one would be offering a number
+ * nothing supports.
+ *
+ * Every figure in the message is read off the pipeline. The assistant is
+ * narrating a computed result, not describing one.
+ */
+export function titleScaleOffer(ctx: AssistantContext, denominator: number): AssistantMessage {
+  const area = ctx.pipeline.ok ? ctx.pipeline.rings[0]?.area : undefined;
+
+  return {
+    id: nextId('msg'),
+    role: 'assistant',
+    text:
+      `Your boundary checks out${area === undefined ? '' : ` — ${Math.round(area)} m²`}. ` +
+      `At this size the plan fits a sheet at 1:${denominator.toLocaleString('en-GB')}. ` +
+      'Shall I put the heading and scale on it? You can edit any of it afterwards, ' +
+      'and anything you type stays yours.',
+    actions: [
+      {
+        id: nextId('act'),
+        label: 'Add all three',
+        intent: {
+          kind: 'add-title-block',
+          title: true,
+          representativeFraction: true,
+          scaleBar: true,
+        },
+        tone: 'primary',
+      },
+      {
+        id: nextId('act'),
+        label: 'Add title',
+        intent: { kind: 'add-title-block', title: true },
+      },
+      {
+        id: nextId('act'),
+        label: 'Add rep. fraction',
+        intent: { kind: 'add-title-block', representativeFraction: true },
+      },
+      {
+        id: nextId('act'),
+        label: 'Add scale bar',
+        intent: { kind: 'add-title-block', scaleBar: true },
+      },
+    ],
+  };
+}
+
+/**
+ * Whether a typed instruction is asking for the title block.
+ *
+ * The point of this function is that the chat command and the card's buttons
+ * end at the same intent — the architecture requires it, and the way to
+ * guarantee it is for the words to produce an `Intent` rather than to call
+ * anything directly.
+ */
+export function titleScaleIntent(question: string): Intent | null {
+  const text = question.toLowerCase();
+
+  const wantsTitle = /\btitle\b|\bheading\b/.test(text);
+  const wantsFraction = /\brep(resentative)?\.? ?fraction\b|\b1\s*:\s*\d/.test(text);
+  const wantsBar = /\bscale ?bar\b|\bbar scale\b/.test(text);
+  // "add the scale" on its own means both ways of stating it, which is what a
+  // surveyor asking for "the scale" means.
+  const wantsScale = /\bscale\b/.test(text) && !wantsBar && !wantsFraction;
+
+  if (!/\b(add|put|show|insert|include|need|want)\b/.test(text)) return null;
+  if (!wantsTitle && !wantsFraction && !wantsBar && !wantsScale) return null;
+
+  return {
+    kind: 'add-title-block',
+    ...(wantsTitle ? { title: true } : {}),
+    ...(wantsFraction || wantsScale ? { representativeFraction: true } : {}),
+    ...(wantsBar || wantsScale ? { scaleBar: true } : {}),
+  };
 }

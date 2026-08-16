@@ -138,6 +138,10 @@ export interface SiteFeature {
   readonly geometry: FeatureGeometry;
   readonly attributes: Readonly<Record<string, string | number | boolean>>;
   readonly provenance: Provenance;
+  /**
+   * Additive. How it is drawn, never where it is or what it measures.
+   */
+  readonly lineStyle?: LineStyle;
 }
 
 export type FeatureGeometry =
@@ -165,6 +169,88 @@ export type FeatureGeometry =
 export interface SurveyNote {
   readonly id: string;
   readonly text: string;
+  readonly provenance: Provenance;
+  /** Additive. Never affects placement — see `TextStyle`. */
+  readonly style?: TextStyle;
+}
+
+// ---------------------------------------------------------------------------
+// Presentation
+// ---------------------------------------------------------------------------
+
+/**
+ * How something is drawn, as opposed to what it is.
+ *
+ * Every field is optional and every absent field means "the default for this
+ * kind of object". That matters more than it looks: it is what lets styling be
+ * added to a plan drawn before styling existed, and what keeps an unstyled
+ * object identical to one that was never offered the choice.
+ *
+ * Style is presentation and nothing else. It must never reach label placement,
+ * geometry, or provenance — a bold dimension is the same dimension, and a red
+ * boundary is the same boundary. Anything that reads these to decide *where*
+ * something goes has crossed a line this type exists to hold.
+ */
+export interface TextStyle {
+  /** Cap height in millimetres on the sheet. Absent means the plan's default. */
+  readonly fontSize?: number;
+  readonly bold?: boolean;
+  readonly italic?: boolean;
+  /** CSS colour. Absent means the drawing's ink colour, which follows theme. */
+  readonly color?: string;
+}
+
+export interface LineStyle {
+  readonly color?: string;
+  /** Millimetres on the sheet. */
+  readonly strokeWidth?: number;
+  readonly dashed?: boolean;
+}
+
+/**
+ * Text the surveyor put on the drawing, anywhere they liked.
+ *
+ * Distinct from `notes`, which are the plan's numbered notes and print in a
+ * block, and from an `annotation` feature, which is a thing on the ground. A
+ * text box is neither: it is a remark placed at a position on the sheet, it is
+ * free-floating by design, and it is deliberately *not* snapped to the survey
+ * grid — an annotation that latched onto a boundary corner would be claiming a
+ * relationship to it that the surveyor did not mean.
+ */
+export interface FreeTextBox {
+  readonly id: string;
+  readonly text: string;
+  /** Where it sits, in survey coordinates, so it stays put as the plan moves. */
+  readonly at: Coordinates;
+  readonly style?: TextStyle;
+  readonly provenance: Provenance;
+}
+
+/**
+ * The title, the representative fraction and the scale bar, as one object.
+ *
+ * One object rather than three because they are one statement: this plan, at
+ * this scale, and here is the bar to check it against. Splitting them lets a
+ * surveyor move the bar away from the fraction it belongs to, or delete one
+ * and leave the sheet claiming a scale nothing verifies.
+ *
+ * A field set here is a field the surveyor has decided. Absent means "read it
+ * from the plan" — the title from the metadata, the scale from the extent —
+ * and that is also what makes the assistant safe to let near it: it fills in
+ * what is absent and never touches what is present.
+ */
+export interface TitleScaleBlock {
+  readonly id: string;
+  readonly at: Coordinates;
+  readonly showTitle: boolean;
+  readonly showRepresentativeFraction: boolean;
+  readonly showScaleBar: boolean;
+  /** Overrides the site address. Present means the surveyor typed it. */
+  readonly title?: string;
+  readonly subtitle?: string;
+  /** The denominator of 1:N. Present means the surveyor chose the scale. */
+  readonly scaleDenominator?: number;
+  readonly style?: TextStyle;
   readonly provenance: Provenance;
 }
 
@@ -228,6 +314,16 @@ export interface SurveyMetadata {
   readonly siteAddress?: string;
   /** Oldest first. The last one is the current issue. */
   readonly revisions?: readonly Revision[];
+  /**
+   * The area someone else says this parcel is — off a deed, a title, a client's
+   * brief — in the square units of the CRS.
+   *
+   * Kept apart from the area the geometry gives, and never used in place of
+   * it. Its whole purpose is to be compared: a stated area and a computed one
+   * that disagree is a fact worth surfacing, and an app that silently prefers
+   * either has thrown away the only signal that something is wrong.
+   */
+  readonly statedArea?: number;
 }
 
 export interface SurveyDataModel {
@@ -239,4 +335,8 @@ export interface SurveyDataModel {
   readonly notes: readonly SurveyNote[];
   /** Dimensions the surveyor placed, beyond the automatic boundary ones. */
   readonly dimensions?: readonly Dimension[];
+  /** Free text the surveyor placed on the sheet. Optional, so older plans read back unchanged. */
+  readonly textBoxes?: readonly FreeTextBox[];
+  /** The title, representative fraction and scale bar, if the plan carries them. */
+  readonly titleBlock?: TitleScaleBlock;
 }

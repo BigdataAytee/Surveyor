@@ -427,3 +427,66 @@
 .canvas__zoom button {
   cursor: pointer;
 }
+
+/* --- Annotations ---------------------------------------------------------- */
+
+/*
+ * The title block and free text boxes.
+ *
+ * Drawn above the survey and styled to read over it: a plate behind the title
+ * block, a halo behind loose text. Neither is survey data and neither looks
+ * like it — no provenance tint, no selection handles, because there is nothing
+ * here whose position means anything to the geometry.
+ */
+
+.annotation {
+  cursor: pointer;
+}
+
+.annotation__target {
+  fill: transparent;
+}
+
+.annotation__text {
+  fill: var(--ink);
+  font-size: 12px;
+  /* A halo, so a note stays readable over a boundary line or a hatched area
+     without a filled box hiding what it annotates. */
+  paint-order: stroke;
+  stroke: var(--surface);
+  stroke-width: 3px;
+  stroke-linejoin: round;
+}
+
+.annotation__text--title {
+  font-size: 14px;
+  font-weight: 600;
+}
+
+.annotation__plate {
+  fill: var(--surface);
+  fill-opacity: 0.86;
+  stroke: var(--border);
+  stroke-width: 1px;
+}
+
+.annotation__bar line {
+  stroke: var(--ink);
+  stroke-width: 1.5px;
+}
+
+.annotation__bar-label {
+  fill: var(--ink-secondary);
+  font-size: 10px;
+}
+
+.annotation__outline {
+  fill: none;
+  stroke: var(--accent);
+  stroke-width: 1.5px;
+  stroke-dasharray: 4 3;
+}
+
+.annotation.is-dragging {
+  opacity: 0.75;
+}

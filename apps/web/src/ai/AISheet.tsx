@@ -12,7 +12,7 @@
 
 import { useEffect, useMemo, useRef, useState } from 'react';
 
-import { looksLikeSurveyData } from '@surveyor/engine';
+import { chooseScale, looksLikeSurveyData, sheetDimensions } from '@surveyor/engine';
 
 import { Button, Card } from '../ui/primitives.js';
 import { SlideUp } from '../ui/motion.js';
@@ -31,7 +31,9 @@ import {
   type AssistantMessage,
   type PanelName,
 } from './assistant.js';
+import { titleScaleIntent, titleScaleOffer } from './assistant.js';
 import { createPlanner } from './planner.js';
+import { annotationAnchor, makeTitleBlock, withParts } from '../state/annotations.js';
 import { ExtractionCard } from './ExtractionCard.js';
 import { extractEndpoint, prepareNote, transcribeNote } from './vision.js';
 import { dismissNote, noteText, queueNote, transcribedNotes } from './queued-notes.js';
@@ -88,6 +90,41 @@ export function AISheet({ onOpenPanel, onSelectTool }: AISheetProps) {
   function push(message: AssistantMessage): void {
     setMessages((current) => [...current, message]);
   }
+
+  /**
+   * The title and scale offer, once.
+   *
+   * Fired the first time a boundary validates, because that is the first
+   * moment there is a scale to state — before it there is no extent to derive
+   * one from. Once per session and never again: a card that reappears every
+   * time the plan revalidates is a card people learn to dismiss without
+   * reading, and this one is asking permission to write on their drawing.
+   */
+  const offered = useRef(false);
+  useEffect(() => {
+    if (offered.current) return;
+    if (!pipeline.ok) return;
+    if (pipeline.validation.status === 'error') return;
+    if (pipeline.rings.length === 0) return;
+    // Nothing to offer if the plan already carries one.
+    if (state.model.titleBlock) return;
+
+    offered.current = true;
+
+    const { min, max } = pipeline.drawing.bounds;
+    push(
+      titleScaleOffer(
+        { model: state.model, pipeline, suggestions: state.suggestions },
+        chooseScale(
+          { width: max.easting - min.easting, height: max.northing - min.northing },
+          sheetDimensions('A4', 'portrait'),
+        ),
+      ),
+    );
+    // Deliberately keyed on the pipeline alone: the guard above is what makes
+    // it once, and adding the model here would re-run it on every edit.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [pipeline]);
 
   /**
    * Transcriptions that finished while nobody was looking.
@@ -235,6 +272,18 @@ export function AISheet({ onOpenPanel, onSelectTool }: AISheetProps) {
     // actually use it.
     if (looksLikeSurveyData(trimmed)) {
       offerExtraction(trimmed);
+      return;
+    }
+
+    /*
+     * A typed request for the title or the scale goes to the same handler the
+     * card's buttons do, before the planner sees it. The architecture asks for
+     * exactly this: the button and the command must call one code path, and the
+     * way to guarantee that is for the words to become the same `Intent`.
+     */
+    const titled = titleScaleIntent(trimmed);
+    if (titled) {
+      runAction({ id: `act_${Date.now()}`, label: trimmed, intent: titled });
       return;
     }
 
@@ -442,6 +491,52 @@ export function AISheet({ onOpenPanel, onSelectTool }: AISheetProps) {
         });
         return;
       }
+      /*
+       * The title, the fraction and the bar.
+       *
+       * The single place either route ends up: this handler is what the card's
+       * buttons reach and what a typed "add the title and scale" reaches, so
+       * the two cannot drift. It creates a block when there is none and turns
+       * parts on when there is — and it never overwrites a field the surveyor
+       * has typed, because `withParts` only ever sets the `show` flags.
+       */
+      case 'add-title-block': {
+        const parts = {
+          ...(intent.title ? { title: true } : {}),
+          ...(intent.representativeFraction ? { representativeFraction: true } : {}),
+          ...(intent.scaleBar ? { scaleBar: true } : {}),
+        };
+
+        const existing = state.model.titleBlock;
+        if (existing) {
+          dispatch({ type: 'update-title-block', patch: withParts(existing, parts) });
+        } else {
+          dispatch({
+            type: 'add-title-block',
+            block: makeTitleBlock(
+              annotationAnchor(state.model, pipeline.ok ? pipeline.drawing.bounds : null),
+              // A block created for one part shows only that part; the others
+              // are added by pressing their own button.
+              {
+                title: parts.title ?? false,
+                representativeFraction: parts.representativeFraction ?? false,
+                scaleBar: parts.scaleBar ?? false,
+              },
+            ),
+          });
+        }
+
+        push({
+          id: `msg_${Date.now()}`,
+          role: 'assistant',
+          text:
+            'Done — it is on the drawing, below the plan. Tap it to edit the ' +
+            'wording or pick a fixed scale; anything you type there stays as ' +
+            'you left it.',
+        });
+        return;
+      }
+
       case 'show':
         dispatch({ type: 'highlight', id: intent.elementId });
         return;
